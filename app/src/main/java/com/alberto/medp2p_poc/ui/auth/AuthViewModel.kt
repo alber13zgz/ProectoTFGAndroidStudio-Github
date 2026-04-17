@@ -253,7 +253,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     fun logout() {
         activeSession = null
         // Recargamos el perfil existente → mostrara ShowLogin
-        checkLocalProfile()
+        checkExistingProfile()
         Log.d(TAG, "Sesion cerrada (perfil conservado).")
     }
 

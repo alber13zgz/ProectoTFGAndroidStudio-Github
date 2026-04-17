@@ -76,6 +76,12 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.0")
-
+    implementation("com.google.zxing:core:3.5.3")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    implementation("androidx.camera:camera-core:1.4.0")
+    implementation("androidx.camera:camera-camera2:1.4.0")
+    implementation("androidx.camera:camera-lifecycle:1.4.0")
+    implementation("androidx.camera:camera-view:1.4.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.0")
 
 }

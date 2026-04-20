@@ -38,6 +38,9 @@ import com.alberto.medp2p_poc.ui.qr.generateQrBitmap
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.google.mlkit.vision.barcode.common.Barcode
 
 private object DashColors {
     val PrimaryBlue = Color(0xFF005FB8)
@@ -74,6 +77,17 @@ fun PantallaDashboardClinico(
     var showManualDialog by remember { mutableStateOf(false) }
     // ── Estado del dialogo QR de "Compartir mi codigo" ──
     var showShareQrDialog by remember { mutableStateOf(false) }
+    // ── Estado para el peerId pre-rellenado (desde QR o manual) ──
+    var scannedPeerId by remember { mutableStateOf("") }
+    
+    val context = LocalContext.current
+    val scannerOptions = remember {
+        GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .enableAutoZoom()
+            .build()
+    }
+    val scanner = remember(context) { GmsBarcodeScanning.getClient(context, scannerOptions) }
 
     Column(
         modifier = Modifier
@@ -212,9 +226,19 @@ fun PantallaDashboardClinico(
                     color = DashColors.PrimaryBlue,
                     onClick = {
                         showLinkSheet = false
-                        // TODO: Lanzar escaner CameraX/ML Kit
-                        // Por ahora abre el manual como fallback
-                        showManualDialog = true
+                        scanner.startScan()
+                            .addOnSuccessListener { barcode ->
+                                val rawValue = barcode.rawValue
+                                if (!rawValue.isNullOrBlank()) {
+                                    scannedPeerId = rawValue
+                                    showManualDialog = true
+                                }
+                            }
+                            .addOnFailureListener {
+                                // En caso de fallo (ej. usuario cancela o sin permisos en versiones viejas)
+                                scannedPeerId = ""
+                                showManualDialog = true
+                            }
                     }
                 )
 
@@ -228,6 +252,7 @@ fun PantallaDashboardClinico(
                     color = DashColors.AccentMint,
                     onClick = {
                         showLinkSheet = false
+                        scannedPeerId = ""
                         showManualDialog = true
                     }
                 )
@@ -240,10 +265,10 @@ fun PantallaDashboardClinico(
     // ══ DIALOGO: ID MANUAL ══
     if (showManualDialog) {
         ManualLinkDialog(
+            initialPeerId = scannedPeerId,
             onDismiss = { showManualDialog = false },
             onConfirm = { name, peerId, allergies ->
-                // Reutilizamos la logica existente del PatientsViewModel
-                // Se navega a pacientes donde ya existe el FAB de vincular
+                viewModel.linkPatient(name, peerId, allergies)
                 showManualDialog = false
                 onNavigateToPatients()
             }
@@ -310,11 +335,12 @@ private fun LinkOptionCard(
 
 @Composable
 private fun ManualLinkDialog(
+    initialPeerId: String,
     onDismiss: () -> Unit,
     onConfirm: (name: String, peerId: String, allergies: String) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
-    var peerId by remember { mutableStateOf("") }
+    var peerId by remember { mutableStateOf(initialPeerId) }
     var allergies by remember { mutableStateOf("") }
 
     AlertDialog(

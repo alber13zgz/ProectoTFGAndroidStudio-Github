@@ -12,6 +12,7 @@ import io.libp2p.core.PeerId
 import io.libp2p.core.crypto.KeyType
 import io.libp2p.core.crypto.PrivKey
 import io.libp2p.core.crypto.generateKeyPair
+import com.alberto.medp2p_poc.data.model.Patient
 import io.libp2p.core.dsl.host
 import io.libp2p.core.multiformats.Multiaddr
 import io.libp2p.security.noise.NoiseXXSecureChannel
@@ -250,6 +251,28 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun refreshCounters() {
         loadDashboardCounters()
+    }
+
+    /**
+     * Vincula un nuevo paciente desde el Dashboard.
+     */
+    fun linkPatient(fullName: String, peerId: String, allergies: String = "") {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val colorIndex = (fullName.hashCode() and 0x7FFFFFFF) % 8
+                val patient = Patient(
+                    fullName = fullName.trim(),
+                    peerId = peerId.trim(),
+                    allergies = allergies.trim(),
+                    avatarColorIndex = colorIndex
+                )
+                dbHelper.insertarPacienteClinico(patient)
+                Log.d(TAG, " Paciente vinculado desde Dashboard: ${patient.fullName}")
+                loadDashboardCounters() // Actualizar el contador de pacientes
+            } catch (e: Exception) {
+                Log.e("P2P_ERROR", "Error vinculando paciente desde Dashboard: ${e.message}")
+            }
+        }
     }
 
     override fun onCleared() {

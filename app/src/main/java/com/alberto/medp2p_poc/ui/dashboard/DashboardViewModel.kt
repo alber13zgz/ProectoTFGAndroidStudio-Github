@@ -17,7 +17,6 @@ import io.libp2p.core.dsl.host
 import io.libp2p.core.multiformats.Multiaddr
 import io.libp2p.security.noise.NoiseXXSecureChannel
 import io.libp2p.transport.tcp.TcpTransport
-import io.libp2p.mux.yamux.YamuxStreamMuxer
 import io.libp2p.protocol.circuit.CircuitStopProtocol
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -112,16 +111,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                         add(::TcpTransport)
                     }
                     secureChannels {
-                        add(::NoiseXXSecureChannel)
-                    }
-                    streamMuxers {
-                        add(::YamuxStreamMuxer)  // Multiplexación de streams para libp2p
+                        add(::NoiseXXSecureChannel)  // Yamux automático con Noise
                     }
                     network {
                         listen("/ip4/0.0.0.0/tcp/0")
                     }
                     protocols {
-                        add(CircuitStopProtocol.Binding(CircuitStopProtocol()))  // Cliente Circuit Relay
+                        add(CircuitStopProtocol.Binding(CircuitStopProtocol()))
                     }
                 }
 
@@ -219,7 +215,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                         identity { factory = { privKey } }
                         transports { add(::TcpTransport) }
                         secureChannels { add(::NoiseXXSecureChannel) }
-                        streamMuxers { add(::YamuxStreamMuxer) }
                         network { listen("/ip4/0.0.0.0/tcp/0") }
                         protocols { add(CircuitStopProtocol.Binding(CircuitStopProtocol())) }
                     }
@@ -277,7 +272,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     avatarColorIndex = colorIndex
                 )
                 dbHelper.insertarPacienteClinico(patient)
-                Log.d(TAG, " Paciente vinculado desde Dashboard: ${patient.fullName}")
+                Log.d(TAG, "✅ Paciente vinculado desde Dashboard: ${patient.fullName}")
                 loadDashboardCounters() // Actualizar el contador de pacientes
             } catch (e: Exception) {
                 Log.e("P2P_ERROR", "Error vinculando paciente desde Dashboard: ${e.message}")
@@ -291,6 +286,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         activeHost?.stop()
         activeHost = null
     }
+
     /**
      * Detiene el nodo y resetea el estado del dashboard.
      * Se llama cuando el usuario cambia de cuenta desde AuthScreen.

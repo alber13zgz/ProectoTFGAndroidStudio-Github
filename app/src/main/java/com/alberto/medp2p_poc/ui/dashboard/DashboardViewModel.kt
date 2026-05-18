@@ -14,8 +14,8 @@ import io.libp2p.core.crypto.PrivKey
 import io.libp2p.core.crypto.generateKeyPair
 import com.alberto.medp2p_poc.data.model.Patient
 import io.libp2p.core.dsl.host
-import io.libp2p.security.secio.SecIoSecureChannel
 import io.libp2p.core.multiformats.Multiaddr
+import io.libp2p.core.mux.StreamMuxerProtocol
 import io.libp2p.security.noise.NoiseXXSecureChannel
 import io.libp2p.transport.tcp.TcpTransport
 import io.libp2p.protocol.circuit.CircuitStopProtocol
@@ -26,20 +26,20 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────
 // JUSTIFICACION ARQUITECTONICA:
 // DashboardViewModel gestiona el ciclo de vida del nodo libp2p de forma
 // completamente invisible para la UI. Expone ConnectionStatus como
 // sealed class — la UI nunca ve conceptos P2P.
 //
-// PROBLEMA ANTERIOR: retryConnection() paraba el nodo y relanzaba
-// sin actualizar el estado a Connecting, y sin timeout en .get().
-// El usuario no veia feedback visual y la UI quedaba congelada.
-//
-// SOLUCION: Ahora retryConnection() pone estado Connecting ANTES
-// de tocar el nodo, usa .get(timeout) para no bloquear infinito,
-// y captura excepciones con mensajes claros para el usuario.
-// ──────────────────────────────────────────────────────────────────────
+// CORRECCIONES aplicadas:
+//   1. SecIoSecureChannel → NoiseXXSecureChannel (compatible con relay JS libp2p v1.x)
+//   2. muxers { add(StreamMuxerProtocol.getYamux()) } añadido explícitamente
+//      para garantizar compatibilidad Yamux con el relay Node.js
+//   3. retryConnection: secureChannels y muxers añadidos al nodo reconstruido
+//   4. connectToRelay: logging detallado con stack trace completo para debug
+//   5. RELAY_ADDRESS actualizado con PeerID real del relay universitario
+// ────────────────────────────────────────────────────────────────────
 
 sealed class ConnectionStatus {
     object Disconnected : ConnectionStatus()
@@ -72,7 +72,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     companion object {
         private const val TAG = "P2P_NETWORK"
         private const val RELAY_ADDRESS =
-            "/ip4/155.210.71.101/tcp/4001/p2p/QmW9PG7kZW9CR21FAZ6W4f4Gzxss7wRsomywGMfbKuGrWa"
+            "/ip4/155.210.71.101/tcp/4001/p2p/12D3KooWM4DFBfu7g8Dir5kspvsef862pEnemaCphC6TREVg3BBn"
         private const val CONNECT_TIMEOUT_SECONDS = 15L
     }
 
@@ -92,18 +92,18 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun startP2PNode(privateKey: PrivKey?) {
         viewModelScope.launch(Dispatchers.IO) {
-            // 1. Actualizar estado INMEDIATAMENTE para que la UI muestre spinner
             _dashboard.value = _dashboard.value.copy(
                 connectionStatus = ConnectionStatus.Connecting
             )
 
             try {
-                // 2. Generar o reutilizar clave
                 val privKey: PrivKey = privateKey
                     ?: generateKeyPair(KeyType.ED25519).first
 
-                // 3. Construir Host
                 Log.d(TAG, "Construyendo nodo libp2p...")
+                // ARQUITECTURA: Noise es el canal seguro estándar moderno de libp2p.
+                // getYamux() fuerza el muxer explícitamente para garantizar compatibilidad
+                // con el relay JS libp2p v1.x que también usa Yamux.
                 val node = host {
                     identity {
                         factory = { privKey }
@@ -112,7 +112,10 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                         add(::TcpTransport)
                     }
                     secureChannels {
-                        add(::SecIoSecureChannel)  // ✅ Secio explícito
+                        add(::NoiseXXSecureChannel)
+                    }
+                    muxers {
+                        add(StreamMuxerProtocol.getYamux())
                     }
                     network {
                         listen("/ip4/0.0.0.0/tcp/0")
@@ -122,16 +125,14 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 }
 
-                // 4. Arrancar con timeout
                 node.start().get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 activeHost = node
                 Log.d(TAG, "Nodo arrancado. PeerId=${node.peerId}")
 
-                // 5. Conectar al Relay con timeout
                 connectToRelay(node)
 
             } catch (e: Exception) {
-                Log.e("P2P_ERROR", "Error arrancando nodo: ${e.message}")
+                Log.e("P2P_ERROR", "Error arrancando nodo: ${e.stackTraceToString()}")
                 _dashboard.value = _dashboard.value.copy(
                     connectionStatus = ConnectionStatus.Error(
                         "No se pudo iniciar la conexion segura. " +
@@ -149,24 +150,27 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
      */
     private fun connectToRelay(node: Host) {
         try {
-            Log.d(TAG, "Conectando al relay...")
+            Log.d(TAG, "Conectando al relay: $RELAY_ADDRESS")
             val relayMultiaddr = Multiaddr(RELAY_ADDRESS)
             val relayPeerId = PeerId.fromBase58(
                 RELAY_ADDRESS.substringAfterLast("/")
             )
 
-            // Timeout para no bloquear infinito si el relay no responde
             node.network.connect(relayPeerId, relayMultiaddr)
                 .get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
 
-            Log.d(TAG, "Conectado al relay universitario.")
+            Log.d(TAG, "✅ Conectado al relay universitario.")
             _dashboard.value = _dashboard.value.copy(
                 connectionStatus = ConnectionStatus.Connected,
                 lastSyncTimestamp = System.currentTimeMillis()
             )
 
         } catch (e: Exception) {
-            Log.e(TAG, "Relay inalcanzable: ${e.message}")
+            // Log detallado para debug: causa raíz + stack trace completo
+            Log.e(TAG, "❌ Relay inalcanzable")
+            Log.e(TAG, "  Tipo: ${e.javaClass.simpleName}")
+            Log.e(TAG, "  Causa: ${e.cause?.javaClass?.simpleName} → ${e.cause?.message}")
+            Log.e(TAG, "  Stack: ${e.stackTraceToString()}")
             _dashboard.value = _dashboard.value.copy(
                 connectionStatus = ConnectionStatus.Error(
                     "La sincronizacion remota no esta disponible. " +
@@ -182,13 +186,10 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     /**
      * Reintento de conexion al relay.
-     *
-     * ANTES: Fallaba en silencio, no actualizaba el estado.
-     * AHORA:
-     *   1. Pone Connecting inmediatamente (spinner visible)
-     *   2. Si ya hay nodo activo, solo reintenta el relay
-     *   3. Si no hay nodo, reconstruye todo desde cero
-     *   4. Captura excepciones y muestra Error con mensaje claro
+     * 1. Pone Connecting inmediatamente (spinner visible)
+     * 2. Si ya hay nodo activo, solo reintenta el relay
+     * 3. Si no hay nodo, reconstruye todo desde cero con configuracion correcta
+     * 4. Captura excepciones y muestra Error con mensaje claro
      */
     fun retryConnection() {
         if (_dashboard.value.connectionStatus is ConnectionStatus.Connecting) return
@@ -208,22 +209,25 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     val privKey: PrivKey = storedPrivateKey
                         ?: generateKeyPair(KeyType.ED25519).first
 
+                    // CORRECCIÓN: misma configuración que startP2PNode —
+                    // Noise + Yamux explícito, sin SecIo
                     val newNode = host {
                         identity { factory = { privKey } }
                         transports { add(::TcpTransport) }
-                        // ❌ secureChannels ELIMINADO - auto-negociación
+                        secureChannels { add(::NoiseXXSecureChannel) }
+                        muxers { add(StreamMuxerProtocol.getYamux()) }
                         network { listen("/ip4/0.0.0.0/tcp/0") }
                         protocols { add(CircuitStopProtocol.Binding(CircuitStopProtocol())) }
                     }
 
-                    newNode.start().get()
+                    newNode.start().get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                     activeHost = newNode
                     Log.d(TAG, "Nodo reconstruido. PeerId=${newNode.peerId}")
 
                     connectToRelay(newNode)
 
                 } catch (e: Exception) {
-                    Log.e("P2P_ERROR", "Retry fallido: ${e.message}", e)
+                    Log.e("P2P_ERROR", "Retry fallido: ${e.stackTraceToString()}")
                     _dashboard.value = _dashboard.value.copy(
                         connectionStatus = ConnectionStatus.Error(
                             "No se pudo reconectar. Comprueba tu conexion WiFi."
@@ -233,7 +237,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
     }
-
 
     // ══════════════════════════════════════════════════════════════
     // ══ CONTADORES ══════════════════════════════════════════════
@@ -271,7 +274,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 )
                 dbHelper.insertarPacienteClinico(patient)
                 Log.d(TAG, "✅ Paciente vinculado desde Dashboard: ${patient.fullName}")
-                loadDashboardCounters() // Actualizar el contador de pacientes
+                loadDashboardCounters()
             } catch (e: Exception) {
                 Log.e("P2P_ERROR", "Error vinculando paciente desde Dashboard: ${e.message}")
             }

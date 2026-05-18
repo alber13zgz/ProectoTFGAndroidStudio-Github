@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import io.libp2p.security.secio.SecIoSecureChannel
 
 // ──────────────────────────────────────────────────────────────────────
 // JUSTIFICACIÓN ARQUITECTÓNICA:
@@ -51,7 +52,7 @@ class OnboardingViewModel : ViewModel() {
     companion object {
         private const val TAG = "P2P_NETWORK"
         private const val RELAY_ADDRESS =
-            "/ip4/155.210.71.101/tcp/4001/p2p/12D3KooWEyo5PbD1eEutc9o1rSuGhZZvm4YQqRiwuD9iJc7VeU6c"
+            "/ip4/155.210.71.101/tcp/4001/p2p/QmW9PG7kZW9CR21FAZ6W4f4Gzxss7wRsomywGMfbKuGrWa"
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -78,12 +79,15 @@ class OnboardingViewModel : ViewModel() {
             try {
                 // ── PASO 1: Construir y arrancar el nodo libp2p ──
                 val node = host {
-                    network {
-                        listen("/ip4/0.0.0.0/tcp/0")
-                        transports { add(::TcpTransport) }
+                    // Sin identity block - se genera automáticamente
+                    transports {
+                        add(::TcpTransport)
                     }
                     secureChannels {
-                        add(::NoiseXXSecureChannel)  // Noise incluye yamux automáticamente
+                        add(::SecIoSecureChannel)
+                    }
+                    network {
+                        listen("/ip4/0.0.0.0/tcp/0")
                     }
                     protocols {
                         add(CircuitStopProtocol.Binding(CircuitStopProtocol()))

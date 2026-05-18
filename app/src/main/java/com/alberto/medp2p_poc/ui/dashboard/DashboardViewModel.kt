@@ -14,6 +14,7 @@ import io.libp2p.core.crypto.PrivKey
 import io.libp2p.core.crypto.generateKeyPair
 import com.alberto.medp2p_poc.data.model.Patient
 import io.libp2p.core.dsl.host
+import io.libp2p.security.secio.SecIoSecureChannel
 import io.libp2p.core.multiformats.Multiaddr
 import io.libp2p.security.noise.NoiseXXSecureChannel
 import io.libp2p.transport.tcp.TcpTransport
@@ -71,7 +72,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     companion object {
         private const val TAG = "P2P_NETWORK"
         private const val RELAY_ADDRESS =
-            "/ip4/155.210.71.101/tcp/4001/p2p/12D3KooWEyo5PbD1eEutc9o1rSuGhZZvm4YQqRiwuD9iJc7VeU6c"
+            "/ip4/155.210.71.101/tcp/4001/p2p/QmW9PG7kZW9CR21FAZ6W4f4Gzxss7wRsomywGMfbKuGrWa"
         private const val CONNECT_TIMEOUT_SECONDS = 15L
     }
 
@@ -111,7 +112,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                         add(::TcpTransport)
                     }
                     secureChannels {
-                        add(::NoiseXXSecureChannel)  // Yamux automático con Noise
+                        add(::SecIoSecureChannel)  // ✅ Secio explícito
                     }
                     network {
                         listen("/ip4/0.0.0.0/tcp/0")
@@ -190,22 +191,18 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
      *   4. Captura excepciones y muestra Error con mensaje claro
      */
     fun retryConnection() {
-        // Evitar multiples retrys simultaneos
         if (_dashboard.value.connectionStatus is ConnectionStatus.Connecting) return
 
         viewModelScope.launch(Dispatchers.IO) {
-            // 1. Feedback INMEDIATO para la UI
             _dashboard.value = _dashboard.value.copy(
                 connectionStatus = ConnectionStatus.Connecting
             )
 
             val node = activeHost
             if (node != null) {
-                // Caso A: Nodo activo, solo reconectar al relay
                 Log.d(TAG, "Retry: nodo activo, reconectando al relay...")
                 connectToRelay(node)
             } else {
-                // Caso B: No hay nodo, reconstruir todo
                 Log.d(TAG, "Retry: sin nodo, reconstruyendo...")
                 try {
                     val privKey: PrivKey = storedPrivateKey
@@ -214,19 +211,19 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     val newNode = host {
                         identity { factory = { privKey } }
                         transports { add(::TcpTransport) }
-                        secureChannels { add(::NoiseXXSecureChannel) }
+                        // ❌ secureChannels ELIMINADO - auto-negociación
                         network { listen("/ip4/0.0.0.0/tcp/0") }
                         protocols { add(CircuitStopProtocol.Binding(CircuitStopProtocol())) }
                     }
 
-                    newNode.start().get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    newNode.start().get()
                     activeHost = newNode
                     Log.d(TAG, "Nodo reconstruido. PeerId=${newNode.peerId}")
 
                     connectToRelay(newNode)
 
                 } catch (e: Exception) {
-                    Log.e("P2P_ERROR", "Retry fallido: ${e.message}")
+                    Log.e("P2P_ERROR", "Retry fallido: ${e.message}", e)
                     _dashboard.value = _dashboard.value.copy(
                         connectionStatus = ConnectionStatus.Error(
                             "No se pudo reconectar. Comprueba tu conexion WiFi."
@@ -236,6 +233,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
     }
+
 
     // ══════════════════════════════════════════════════════════════
     // ══ CONTADORES ══════════════════════════════════════════════

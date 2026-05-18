@@ -10,7 +10,6 @@ import io.libp2p.core.multiformats.Multiaddr
 import io.libp2p.protocol.circuit.CircuitStopProtocol
 import io.libp2p.transport.tcp.TcpTransport
 import io.libp2p.security.noise.NoiseXXSecureChannel
-import io.libp2p.mux.yamux.YamuxStreamMuxer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,7 +32,7 @@ sealed class OnboardingUiState {
     /** Generando par de claves Ed25519 y arrancando el nodo libp2p. */
     object GeneratingIdentity : OnboardingUiState()
 
-    /** Identidad generada con éxito. Contiene el PeerId resultante. */
+    /** Identidad generada con éxito. Contiene el PeerID resultante. */
     data class IdentityReady(val peerId: String, val host: Host) : OnboardingUiState()
 
     /** Algo falló durante la generación. Mensaje legible para el usuario. */
@@ -55,12 +54,12 @@ class OnboardingViewModel : ViewModel() {
             "/ip4/155.210.71.101/tcp/4001/p2p/12D3KooWEyo5PbD1eEutc9o1rSuGhZZvm4YQqRiwuD9iJc7VeU6c"
     }
 
-    // ──────────────────────────────────────────────────────────────────
+    // ──────────────────────────────────────────────────────────────────────
     // REGLA DE THREADING: viewModelScope.launch(Dispatchers.IO) para
     // toda operación criptográfica/red. withContext(Dispatchers.Main)
     // SOLO se necesitaría para UI, pero aquí actualizamos StateFlow
     // (thread-safe) así que no hace falta cambiar de dispatcher.
-    // ──────────────────────────────────────────────────────────────────
+    // ──────────────────────────────────────────────────────────────────────
 
     /**
      * Genera la identidad criptográfica P2P del dispositivo.
@@ -84,10 +83,7 @@ class OnboardingViewModel : ViewModel() {
                         transports { add(::TcpTransport) }
                     }
                     secureChannels {
-                        add(::NoiseXXSecureChannel)  // Encriptación Noise XX
-                    }
-                    streamMuxers {
-                        add(YamuxStreamMuxer())  //
+                        add(::NoiseXXSecureChannel)  // Noise incluye yamux automáticamente
                     }
                     protocols {
                         add(CircuitStopProtocol.Binding(CircuitStopProtocol()))

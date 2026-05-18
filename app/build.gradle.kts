@@ -62,7 +62,7 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
-    implementation("io.libp2p:jvm-libp2p:1.2.2-RELEASE")
+    implementation("io.libp2p:jvm-libp2p:1.1.1-RELEASE")
     implementation("io.netty:netty-codec:4.1.100.Final")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

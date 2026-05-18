@@ -17,6 +17,8 @@ import io.libp2p.core.dsl.host
 import io.libp2p.core.multiformats.Multiaddr
 import io.libp2p.security.noise.NoiseXXSecureChannel
 import io.libp2p.transport.tcp.TcpTransport
+import io.libp2p.mux.yamux.YamuxStreamMuxer
+import io.libp2p.protocol.circuit.CircuitStopProtocol
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -70,7 +72,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     companion object {
         private const val TAG = "P2P_NETWORK"
         private const val RELAY_ADDRESS =
-            "/ip4/155.210.71.101/tcp/4001/p2p/12D3KooWG1zfvMX5xqqhAurArDN3gPfTCiELtFRUffYfMW88KoxZ"
+            "/ip4/155.210.71.101/tcp/4001/p2p/12D3KooWEyo5PbD1eEutc9o1rSuGhZZvm4YQqRiwuD9iJc7VeU6c"
         private const val CONNECT_TIMEOUT_SECONDS = 15L
     }
 
@@ -112,8 +114,14 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     secureChannels {
                         add(::NoiseXXSecureChannel)
                     }
+                    streamMuxers {
+                        add(::YamuxStreamMuxer)  // Multiplexación de streams para libp2p
+                    }
                     network {
                         listen("/ip4/0.0.0.0/tcp/0")
+                    }
+                    protocols {
+                        add(CircuitStopProtocol.Binding(CircuitStopProtocol()))  // Cliente Circuit Relay
                     }
                 }
 
@@ -211,7 +219,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                         identity { factory = { privKey } }
                         transports { add(::TcpTransport) }
                         secureChannels { add(::NoiseXXSecureChannel) }
+                        streamMuxers { add(::YamuxStreamMuxer) }
                         network { listen("/ip4/0.0.0.0/tcp/0") }
+                        protocols { add(CircuitStopProtocol.Binding(CircuitStopProtocol())) }
                     }
 
                     newNode.start().get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)

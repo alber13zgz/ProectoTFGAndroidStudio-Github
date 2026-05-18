@@ -9,6 +9,8 @@ import io.libp2p.core.dsl.host
 import io.libp2p.core.multiformats.Multiaddr
 import io.libp2p.protocol.circuit.CircuitStopProtocol
 import io.libp2p.transport.tcp.TcpTransport
+import io.libp2p.security.noise.NoiseXXSecureChannel
+import io.libp2p.mux.yamux.YamuxStreamMuxer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,7 +52,7 @@ class OnboardingViewModel : ViewModel() {
     companion object {
         private const val TAG = "P2P_NETWORK"
         private const val RELAY_ADDRESS =
-            "/ip4/155.210.71.101/tcp/4001/p2p/12D3KooWG1zfvMX5xqqhAurArDN3gPfTCiELtFRUffYfMW88KoxZ"
+            "/ip4/155.210.71.101/tcp/4001/p2p/12D3KooWEyo5PbD1eEutc9o1rSuGhZZvm4YQqRiwuD9iJc7VeU6c"
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -80,6 +82,12 @@ class OnboardingViewModel : ViewModel() {
                     network {
                         listen("/ip4/0.0.0.0/tcp/0")
                         transports { add(::TcpTransport) }
+                    }
+                    secureChannels {
+                        add(::NoiseXXSecureChannel)  // Encriptación Noise XX
+                    }
+                    streamMuxers {
+                        add(YamuxStreamMuxer())  //
                     }
                     protocols {
                         add(CircuitStopProtocol.Binding(CircuitStopProtocol()))

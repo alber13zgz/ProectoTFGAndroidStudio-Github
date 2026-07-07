@@ -26,21 +26,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 
-// ────────────────────────────────────────────────────────────────────
-// JUSTIFICACION ARQUITECTONICA:
-// DashboardViewModel gestiona el ciclo de vida del nodo libp2p de forma
-// completamente invisible para la UI. Expone ConnectionStatus como
-// sealed class — la UI nunca ve conceptos P2P.
-//
-// CORRECCIONES aplicadas:
-//   1. SecIoSecureChannel → NoiseXXSecureChannel (compatible con relay JS libp2p v1.x)
-//   2. muxers { add(StreamMuxerProtocol.getYamux()) } añadido explícitamente
-//      para garantizar compatibilidad Yamux con el relay Node.js
-//   3. retryConnection: secureChannels y muxers añadidos al nodo reconstruido
-//   4. connectToRelay: logging detallado con stack trace completo para debug
-//   5. RELAY_ADDRESS actualizado con PeerID real del relay universitario
-// ────────────────────────────────────────────────────────────────────
-
 sealed class ConnectionStatus {
     object Disconnected : ConnectionStatus()
     object Connecting : ConnectionStatus()
@@ -72,7 +57,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     companion object {
         private const val TAG = "P2P_NETWORK"
         private const val RELAY_ADDRESS =
-            "/ip4/13.48.59.216/tcp/4001/p2p/12D3KooWCoijb4oZBLkonFjNjamsBN3mQZ1jTk7jFbYmvtqFdbiN"
+            "/ip4/13.48.59.216/tcp/4001/p2p/12D3KooWKSuVWY9oFPZUMreCFWrNAAG9tZfyuDMjD5DhHkKhwysc"
         private const val CONNECT_TIMEOUT_SECONDS = 15L
     }
 
@@ -86,10 +71,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         startP2PNode(privateKey)
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // ══ ARRANQUE DEL NODO ═══════════════════════════════════════
-    // ══════════════════════════════════════════════════════════════
-
     private fun startP2PNode(privateKey: PrivKey?) {
         viewModelScope.launch(Dispatchers.IO) {
             _dashboard.value = _dashboard.value.copy(
@@ -101,9 +82,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     ?: generateKeyPair(KeyType.ED25519).first
 
                 Log.d(TAG, "Construyendo nodo libp2p...")
-                // ARQUITECTURA: Noise es el canal seguro estándar moderno de libp2p.
-                // getYamux() fuerza el muxer explícitamente para garantizar compatibilidad
-                // con el relay JS libp2p v1.x que también usa Yamux.
                 val node = host {
                     identity {
                         factory = { privKey }
@@ -135,19 +113,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 Log.e("P2P_ERROR", "Error arrancando nodo: ${e.stackTraceToString()}")
                 _dashboard.value = _dashboard.value.copy(
                     connectionStatus = ConnectionStatus.Error(
-                        "No se pudo iniciar la conexion segura. " +
-                                "La app funciona en modo local."
+                        "No se pudo iniciar la conexion segura. La app funciona en modo local."
                     )
                 )
             }
         }
     }
 
-    /**
-     * Intenta conectar al relay universitario.
-     * Si falla, la app sigue funcionando en modo local.
-     * El usuario ve "Sincronizacion no disponible", nunca un crash.
-     */
     private fun connectToRelay(node: Host) {
         try {
             Log.d(TAG, "Conectando al relay: $RELAY_ADDRESS")
@@ -155,6 +127,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             val relayPeerId = PeerId.fromBase58(
                 RELAY_ADDRESS.substringAfterLast("/")
             )
+
+            Log.d(TAG, "PeerId extraído: $relayPeerId")
 
             node.network.connect(relayPeerId, relayMultiaddr)
                 .get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -166,31 +140,18 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             )
 
         } catch (e: Exception) {
-            // Log detallado para debug: causa raíz + stack trace completo
             Log.e(TAG, "❌ Relay inalcanzable")
             Log.e(TAG, "  Tipo: ${e.javaClass.simpleName}")
             Log.e(TAG, "  Causa: ${e.cause?.javaClass?.simpleName} → ${e.cause?.message}")
             Log.e(TAG, "  Stack: ${e.stackTraceToString()}")
             _dashboard.value = _dashboard.value.copy(
                 connectionStatus = ConnectionStatus.Error(
-                    "La sincronizacion remota no esta disponible. " +
-                            "Tus datos locales siguen seguros."
+                    "La sincronizacion remota no esta disponible. Tus datos locales siguen seguros."
                 )
             )
         }
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // ══ RETRY CON FEEDBACK VISUAL ═══════════════════════════════
-    // ══════════════════════════════════════════════════════════════
-
-    /**
-     * Reintento de conexion al relay.
-     * 1. Pone Connecting inmediatamente (spinner visible)
-     * 2. Si ya hay nodo activo, solo reintenta el relay
-     * 3. Si no hay nodo, reconstruye todo desde cero con configuracion correcta
-     * 4. Captura excepciones y muestra Error con mensaje claro
-     */
     fun retryConnection() {
         if (_dashboard.value.connectionStatus is ConnectionStatus.Connecting) return
 
@@ -209,8 +170,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     val privKey: PrivKey = storedPrivateKey
                         ?: generateKeyPair(KeyType.ED25519).first
 
-                    // CORRECCIÓN: misma configuración que startP2PNode —
-                    // Noise + Yamux explícito, sin SecIo
                     val newNode = host {
                         identity { factory = { privKey } }
                         transports { add(::TcpTransport) }
@@ -238,10 +197,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // ══ CONTADORES ══════════════════════════════════════════════
-    // ══════════════════════════════════════════════════════════════
-
     private fun loadDashboardCounters() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -259,9 +214,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         loadDashboardCounters()
     }
 
-    /**
-     * Vincula un nuevo paciente desde el Dashboard.
-     */
     fun linkPatient(fullName: String, peerId: String, allergies: String = "") {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -288,10 +240,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         activeHost = null
     }
 
-    /**
-     * Detiene el nodo y resetea el estado del dashboard.
-     * Se llama cuando el usuario cambia de cuenta desde AuthScreen.
-     */
     fun shutdown() {
         activeHost?.stop()
         activeHost = null

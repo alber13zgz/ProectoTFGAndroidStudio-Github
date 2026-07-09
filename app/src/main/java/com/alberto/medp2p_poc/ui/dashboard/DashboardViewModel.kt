@@ -57,7 +57,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     companion object {
         private const val TAG = "P2P_NETWORK"
         private const val RELAY_ADDRESS =
-            "/ip4/13.48.59.216/tcp/4001/p2p/12D3KooWPtMx631fqVSupCHPqyxAZWmZhQeyoahXUKveVrybmaRs"
+            "/ip4/13.48.59.216/tcp/4001/p2p/12D3KooWEBiChhAXXnZRPoM37aoawZbYQKp7WxqtC7LrfZFab4TV"
         private const val CONNECT_TIMEOUT_SECONDS = 15L
     }
 

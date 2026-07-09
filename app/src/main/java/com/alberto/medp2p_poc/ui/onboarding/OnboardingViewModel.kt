@@ -60,7 +60,7 @@ class OnboardingViewModel : ViewModel() {
     companion object {
         private const val TAG = "P2P_NETWORK"
         private const val RELAY_ADDRESS =
-            "/ip4/155.210.71.101/tcp/4001/p2p/12D3KooWFDwzbEg7GypNvkhwM7Eh2WdVKAssvibB6WdbFkRTqksw"
+            "/ip4/13.48.59.216 /tcp/4001/p2p/12D3KooWPtMx631fqVSupCHPqyxAZWmZhQeyoahXUKveVrybmaRs"
         private const val CONNECT_TIMEOUT_SECONDS = 15L
     }
 

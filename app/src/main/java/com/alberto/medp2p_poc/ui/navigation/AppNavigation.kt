@@ -35,10 +35,10 @@ import com.alberto.medp2p_poc.ui.patients.detail.PatientDetailViewModel
 import com.alberto.medp2p_poc.ui.profile.ProfileScreen
 
 private object NavColors {
-    val PrimaryBlue = Color(0xFF005FB8)
+    val PrimaryBlue     = Color(0xFF005FB8)
     val PrimaryBlueDark = Color(0xFF003D7A)
-    val TextSecondary = Color(0xFF6B7280)
-    val SurfaceWhite = Color(0xFFF8FAFE)
+    val TextSecondary   = Color(0xFF6B7280)
+    val SurfaceWhite    = Color(0xFFF8FAFE)
 }
 
 sealed class ProfessionalRoute(
@@ -46,23 +46,28 @@ sealed class ProfessionalRoute(
     val title: String,
     val icon: ImageVector
 ) {
-    object Home : ProfessionalRoute("home", "Dashboard", Icons.Outlined.Home)
+    object Home     : ProfessionalRoute("home",     "Dashboard", Icons.Outlined.Home)
     object Patients : ProfessionalRoute("patients", "Pacientes", Icons.Outlined.People)
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// JUSTIFICACIÓN ARQUITECTÓNICA: eliminación de onEnviarMensaje
+//
+// El callback onEnviarMensaje ha sido eliminado. El envío P2P ahora
+// ocurre dentro de PatientDetailViewModel.addClinicalNote(), que
+// recibe dashboardViewModel directamente. La Activity queda libre
+// de toda lógica de red (Principio de Responsabilidad Única).
+// ══════════════════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ClinicalAppNavigation(
     userRole: UserRole,
     userName: String,
     dashboardViewModel: DashboardViewModel,
-    onEnviarMensaje: (String, String) -> Unit,
     onCerrarSesion: () -> Unit
 ) {
-    // NavController compartido a nivel de toda la app
     val navController = rememberNavController()
 
-    // Iniciales para el avatar
     val initials = userName
         .split(" ")
         .take(2)
@@ -80,7 +85,6 @@ fun ClinicalAppNavigation(
                     )
                 },
                 navigationIcon = {
-                    // ── Avatar clicable → navega a perfil ──
                     Box(
                         modifier = Modifier
                             .padding(start = 12.dp)
@@ -131,14 +135,10 @@ fun ClinicalAppNavigation(
                 PantallaDashboardClinico(
                     viewModel = dashboardViewModel,
                     onNavigateToPatients = {
-                        navController.navigate("patients") {
-                            launchSingleTop = true
-                        }
+                        navController.navigate("patients") { launchSingleTop = true }
                     },
                     onNavigateToProfile = {
-                        navController.navigate("profile_edit") {
-                            launchSingleTop = true
-                        }
+                        navController.navigate("profile_edit") { launchSingleTop = true }
                     }
                 )
             }
@@ -159,10 +159,20 @@ fun ClinicalAppNavigation(
             ) { backStackEntry ->
                 val peerId = backStackEntry.arguments?.getString("peerId") ?: ""
                 val detailViewModel: PatientDetailViewModel = viewModel()
+
+                // ── Activar recepción P2P en tiempo real ──────────────
+                // LaunchedEffect con peerId como clave garantiza que esta
+                // corutina se lanza una sola vez al entrar en la pantalla,
+                // no en cada recomposición. Si el usuario navega a otro
+                // paciente, se cancela y se relanza con el nuevo peerId.
+                LaunchedEffect(peerId) {
+                    detailViewModel.observeIncomingMessages(dashboardViewModel, peerId)
+                }
+
                 PantallaDetallePaciente(
-                    peerId = peerId,
+                    peerId    = peerId,
                     viewModel = detailViewModel,
-                    onBack = { navController.popBackStack() }
+                    onBack    = { navController.popBackStack() }
                 )
             }
 
@@ -171,12 +181,10 @@ fun ClinicalAppNavigation(
             // ══════════════════════════════════════════
             composable("patient_home") {
                 PatientDashboardScreen(
-                    dashboardViewModel = dashboardViewModel,
-                    onCerrarSesion = onCerrarSesion,
+                    dashboardViewModel  = dashboardViewModel,
+                    onCerrarSesion      = onCerrarSesion,
                     onNavigateToProfile = {
-                        navController.navigate("profile_edit") {
-                            launchSingleTop = true
-                        }
+                        navController.navigate("profile_edit") { launchSingleTop = true }
                     }
                 )
             }
@@ -187,7 +195,7 @@ fun ClinicalAppNavigation(
             composable("profile_edit") {
                 ProfileScreen(
                     dashboardViewModel = dashboardViewModel,
-                    onBack = { navController.popBackStack() }
+                    onBack             = { navController.popBackStack() }
                 )
             }
         }

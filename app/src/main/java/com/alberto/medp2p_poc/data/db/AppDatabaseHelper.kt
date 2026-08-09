@@ -504,4 +504,64 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             db.close()
         }
     }
+    // ══════════════════════════════════════════════════════════════════
+    // ══ SYNC LOG — Patrón Transactional Outbox ══════════════════════
+    // ══════════════════════════════════════════════════════════════════
+    //
+    // JUSTIFICACIÓN ARQUITECTÓNICA PARA EL TFG:
+    //
+    // La tabla sync_log implementa el patrón "Transactional Outbox",
+    // conocido en sistemas distribuidos como Event Sourcing local.
+    // Resuelve el problema del "doble fallo": garantizar que una
+    // escritura en el dominio local (SQLite) y un evento de red
+    // (envío P2P) sean consistentes aunque la app o la red fallen
+    // entre ambas operaciones.
+    //
+    // Ciclo de vida de un registro en sync_log:
+    //
+    //   SEND_PENDING → El MedicalRecord fue persistido localmente.
+    //                  El envío P2P aún no ha sido confirmado.
+    //                  Si la app muere aquí, el dato NO se pierde:
+    //                  ya está en SQLite. Un Worker puede reintentarlo.
+    //
+    //   DELIVERED    → El peer receptor confirmó la recepción con ACK
+    //                  y el dato está persistido en su disco.
+    //                  El ciclo de vida del evento se completó.
+    //
+    // La transición SEND_PENDING → DELIVERED la ejecuta
+    // P2PMessagingService al recibir el ACK del peer destino.
+    //
+    // Referencia: Richardson, C. (2018). "Microservices Patterns",
+    // Manning Publications. Cap. 3 — Transactional Outbox Pattern.
+    // ══════════════════════════════════════════════════════════════════
+
+    fun enqueueSyncLog(recordId: String, tabla: String, accion: String) {
+        val db = this.writableDatabase
+        try {
+            db.execSQL(
+                """INSERT INTO sync_log
+                   (tablaAfectada, registroAfectadoId, accion, timestampModificacion)
+                   VALUES (?, ?, ?, ?)""",
+                arrayOf(tabla, recordId, accion, System.currentTimeMillis())
+            )
+            Log.d("P2P_SYNCLOG", "[OUTBOX] Encolado: tabla=$tabla id=$recordId accion=$accion")
+        } finally {
+            db.close()
+        }
+    }
+
+    fun updateSyncLogStatus(recordId: String, nuevaAccion: String) {
+        val db = this.writableDatabase
+        try {
+            db.execSQL(
+                """UPDATE sync_log
+                   SET accion = ?, timestampModificacion = ?
+                   WHERE registroAfectadoId = ? AND accion = 'SEND_PENDING'""",
+                arrayOf(nuevaAccion, System.currentTimeMillis(), recordId)
+            )
+            Log.d("P2P_SYNCLOG", "[OUTBOX] Actualizado: id=$recordId → $nuevaAccion")
+        } finally {
+            db.close()
+        }
+    }
 }

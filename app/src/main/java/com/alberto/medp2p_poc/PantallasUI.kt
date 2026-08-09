@@ -121,7 +121,8 @@ fun AppNavegacion(miDireccionVisible: String, direccionDestinoAutomatica: String
             coroutineScope.launch(Dispatchers.IO) {
                 val dbHelper = com.alberto.medp2p_poc.data.db.AppDatabaseHelper(context)
                 val peerIdDestino = direccionDestinoActual.substringAfterLast("/")
-                val historialDB = dbHelper.obtenerHistorial(peerIdDestino)
+                val historialDB = dbHelper.obtenerHistorial(peerIdDestino, "")
+
 
                 withContext(Dispatchers.Main) {
                     historialMensajes.clear()

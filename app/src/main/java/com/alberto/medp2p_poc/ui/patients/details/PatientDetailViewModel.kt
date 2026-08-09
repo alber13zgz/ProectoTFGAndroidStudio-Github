@@ -68,9 +68,12 @@ class PatientDetailViewModel(application: Application) : AndroidViewModel(applic
     // ══════════════════════════════════════════════════════════════
     fun loadPatientDetail(peerId: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            val patient = dbHelper.obtenerPacienteClinicoPorPeerId(peerId, ownerPeerId)
+            val history = dbHelper.obtenerHistorial(peerId, ownerPeerId)
             _state.value = _state.value.copy(isLoading = true, errorMessage = null)
             try {
-                val patient     = dbHelper.obtenerPacienteClinicoPorPeerId(peerId)
+                val patient = dbHelper.obtenerPacienteClinicoPorPeerId(peerId, ownerPeerId)
+
                 if (patient == null) {
                     _state.value = _state.value.copy(
                         isLoading    = false,
@@ -79,8 +82,7 @@ class PatientDetailViewModel(application: Application) : AndroidViewModel(applic
                     return@launch
                 }
                 val medications = dbHelper.obtenerMedicacionesActivas(peerId)
-                val history     = dbHelper.obtenerHistorial(peerId)
-
+                val history = dbHelper.obtenerHistorial(peerId, ownerPeerId)
                 _state.value = PatientDetailState(
                     patient           = patient,
                     activeMedications = medications,
@@ -167,8 +169,8 @@ class PatientDetailViewModel(application: Application) : AndroidViewModel(applic
                     Log.i(TAG, "[P2P] Nota enviada a $peerId")
                 } else {
                     // ── SOLO LOCAL: sin dirección P2P conocida ────────
-                    dbHelper.guardarRegistroMedico(record)
-                    val updatedHistory = dbHelper.obtenerHistorial(peerId)
+                    dbHelper.guardarRegistroMedico(record, ownerPeerId)
+                    val updatedHistory = dbHelper.obtenerHistorial(peerId, ownerPeerId)
                     _state.value = _state.value.copy(
                         medicalHistory = updatedHistory,
                         lastSendResult = SendResult.SavedOnly

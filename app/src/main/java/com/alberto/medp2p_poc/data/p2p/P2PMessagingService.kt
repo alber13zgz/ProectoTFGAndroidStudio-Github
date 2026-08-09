@@ -1,15 +1,9 @@
 package com.alberto.medp2p_poc.data.p2p
 
-
-// ── Contexto Android ──────────────────────────────────────────────────
 import android.content.Context
 import android.util.Log
-
-// ── Capa de dominio y base de datos ──────────────────────────────────
 import com.alberto.medp2p_poc.data.db.AppDatabaseHelper
 import com.alberto.medp2p_poc.data.model.MedicalRecord
-
-// ── jvm-libp2p: contratos de protocolo y construcción del nodo ───────
 import io.libp2p.core.Host
 import io.libp2p.core.P2PChannel
 import io.libp2p.core.PeerId
@@ -22,20 +16,12 @@ import io.libp2p.core.mux.StreamMuxerProtocol
 import io.libp2p.protocol.circuit.CircuitStopProtocol
 import io.libp2p.security.noise.NoiseXXSecureChannel
 import io.libp2p.transport.tcp.TcpTransport
-
-// ── Netty: pipeline de decodificación de bytes ────────────────────────
 import io.netty.buffer.Unpooled
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelInboundHandlerAdapter
 import io.netty.handler.codec.LineBasedFrameDecoder
 import io.netty.handler.codec.string.StringDecoder
 import io.netty.util.CharsetUtil
-
-// ── Serialización JSON ────────────────────────────────────────────────
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-
-// ── Corrutinas ────────────────────────────────────────────────────────
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -44,183 +30,116 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-// ── Java ──────────────────────────────────────────────────────────────
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
 // ══════════════════════════════════════════════════════════════════════
-// JUSTIFICACIÓN ARQUITECTÓNICA: SERVICE LAYER
+// PROTOCOLO DE MENSAJES P2P — Versión 2
 //
-// P2PMessagingService es una clase Kotlin ordinaria (no un Android
-// Service ni un ViewModel). Su responsabilidad única es gestionar los
-// protocolos de aplicación P2P: construir el receptor de mensajes,
-// arrancar el nodo libp2p y enviar MedicalRecords.
+// FIX FALLO 3 — Vinculación bidireccional:
+// Se introduce el concepto de "tipo de mensaje". El campo "type" en
+// el JSON determina cómo procesar el payload:
 //
-// No tiene conocimiento de la UI. No importa nada de Compose ni de
-// ViewModel. Esto permite que los ViewModels sean testeables de forma
-// aislada sustituyendo este servicio por un doble de prueba (mock).
+//   type = "MEDICAL_RECORD" → MedicalRecord (comportamiento anterior)
+//   type = "LINK_DOCTOR"    → LinkDoctorPayload (nuevo)
 //
-// El DashboardViewModel es el único punto de entrada: instancia este
-// servicio, llama a start() y expone el SharedFlow hacia la UI.
+// El receptor deserializa primero solo el campo "type" con
+// Json.parseToJsonElement() antes de deserializar el payload completo.
+// Esto es tolerante a versiones: mensajes con tipos desconocidos se
+// descartan con un log de advertencia sin cerrar el canal.
 // ══════════════════════════════════════════════════════════════════════
+
+@Serializable
+data class P2PEnvelope(
+    val type: String,
+    val payload: String  // JSON del payload serializado como String
+)
+
+@Serializable
+data class LinkDoctorPayload(
+    val doctorPeerId: String,
+    val doctorName: String
+)
+
 class P2PMessagingService(
     private val context: Context,
     private val dbHelper: AppDatabaseHelper
 ) {
-
     companion object {
         const val PROTOCOL_ID = "/medp2p/registro/1.0.0"
-
         private const val RELAY_ADDRESS =
             "/ip4/13.48.59.216/tcp/4001/p2p/12D3KooWEBiChhAXXnZRPoM37aoawZbYQKp7WxqtC7LrfZFab4TV"
-
         private const val CONNECT_TIMEOUT_SECONDS = 15L
-
-        // Tamaño máximo de un frame JSON. 8 KB es suficiente para un
-        // MedicalRecord con texto clínico largo. Protege contra
-        // ataques de frame gigante que agotarían la RAM del dispositivo.
         private const val MAX_FRAME_LENGTH = 8192
-
         private const val TAG = "P2P_MSG_SERVICE"
+
+        const val TYPE_MEDICAL_RECORD = "MEDICAL_RECORD"
+        const val TYPE_LINK_DOCTOR    = "LINK_DOCTOR"
     }
 
-    // ══════════════════════════════════════════════════════════════════
-    // BUS DE EVENTOS: SharedFlow de mensajes entrantes
-    //
-    // Por qué SharedFlow y NO StateFlow:
-    //   StateFlow representa ESTADO: solo conserva el último valor y
-    //   colapsa emisiones rápidas. Si dos MedicalRecord llegasen en
-    //   milisegundos, StateFlow descartaría el primero. Inaceptable.
-    //
-    //   SharedFlow representa EVENTOS discretos: cada emisión es
-    //   independiente. Todos los colectores activos reciben cada mensaje.
-    //
-    // replay = 0: Los nuevos colectores NO reciben mensajes del pasado.
-    //   Esos ya están en SQLite. Evitamos duplicados al navegar.
-    //
-    // extraBufferCapacity = 64: Buffer para absorber ráfagas sin
-    //   bloquear el hilo del receptor Netty.
-    // ══════════════════════════════════════════════════════════════════
     private val _incomingMessages = MutableSharedFlow<MedicalRecord>(
         replay = 0,
         extraBufferCapacity = 64
     )
     val incomingMessages: SharedFlow<MedicalRecord> = _incomingMessages
 
-    // ══════════════════════════════════════════════════════════════════
-    // SCOPE PROPIO DEL SERVICIO
-    //
-    // Por qué un scope propio y no viewModelScope:
-    //   El nodo P2P debe sobrevivir a rotaciones de pantalla. Android
-    //   destruye y recrea el ViewModel al rotar, pero el socket TCP
-    //   no debe cerrarse en ese proceso.
-    //
-    // Por qué SupervisorJob():
-    //   Con Job normal, si un envío falla, cancela TODO el scope,
-    //   incluyendo el receptor. Con SupervisorJob, el fallo de un hijo
-    //   es aislado: el receptor sigue vivo aunque un envío falle.
-    // ══════════════════════════════════════════════════════════════════
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    // Parser JSON reutilizable. ignoreUnknownKeys = true garantiza
-    // compatibilidad hacia adelante: si el emisor añade campos nuevos
-    // en el futuro, el receptor no fallará al deserializar.
     private val json = Json { ignoreUnknownKeys = true }
 
-    // ══════════════════════════════════════════════════════════════════
-    // FUNCIÓN 1: buildReceiverBinding()
+    // ownerPeerId del usuario activo — se establece en start()
+    // para que el receptor sepa a qué cuenta pertenecen los datos
+    private var ownerPeerId: String = ""
+
+    // ══════════════════════════════════════════════════════════════
+    // buildReceiverBinding() — FIX FALLO 3
     //
-    // Construye el ProtocolBinding RECEPTOR para /medp2p/registro/1.0.0.
-    //
-    // Por qué debe registrarse al construir el nodo (no dinámicamente):
-    //   libp2p negocia protocolos durante el handshake multistream-select
-    //   al abrir cada stream. Si el protocolo no está en la lista del
-    //   nodo en ese momento, el handshake falla con "protocol not
-    //   supported". jvm-libp2p no permite registro de protocolos en
-    //   caliente sin reiniciar el nodo.
-    //
-    // DECISIÓN DE DISEÑO — Semántica At-Least-Once (al menos una vez):
-    //   El ACK se envía al emisor DENTRO de la corutina, estrictamente
-    //   DESPUÉS de que guardarRegistroMedico() complete con éxito.
-    //   Esto implementa la garantía semántica "ACK = dato persistido
-    //   en disco". Si la app crashea tras escribir en SQLite pero antes
-    //   del ACK, el emisor reintentará el envío (el dato puede llegar
-    //   dos veces, de ahí "At-Least-Once", pero nunca se pierde).
-    //   Esta semántica es la adecuada para datos clínicos donde la
-    //   pérdida de datos es inaceptable.
-    // ══════════════════════════════════════════════════════════════════
+    // ANTES: solo deserializaba MedicalRecord.
+    // AHORA: deserializa P2PEnvelope y despacha según el campo "type":
+    //   - MEDICAL_RECORD → guarda en historial_clinico con ownerPeerId
+    //   - LINK_DOCTOR    → guarda en medico_vinculado con ownerPeerId
+    // ══════════════════════════════════════════════════════════════
     private fun buildReceiverBinding(): ProtocolBinding<Unit> {
-
         return object : ProtocolBinding<Unit> {
-
             override val protocolDescriptor = ProtocolDescriptor(PROTOCOL_ID)
 
             override fun initChannel(
                 ch: P2PChannel,
                 selectedProtocol: String
             ): CompletableFuture<Unit> {
-
-                // HANDLER 1: LineBasedFrameDecoder
-                // TCP es un flujo de bytes, no de mensajes. Un JSON puede
-                // llegar partido en varios segmentos TCP. Este handler
-                // acumula bytes hasta encontrar '\n' y solo entonces pasa
-                // el frame completo al siguiente handler del pipeline.
                 ch.pushHandler(LineBasedFrameDecoder(MAX_FRAME_LENGTH))
-
-                // HANDLER 2: StringDecoder
-                // Convierte el ByteBuf (ya completo y delimitado) a String
-                // UTF-8. A partir de aquí el pipeline trabaja con Strings.
                 ch.pushHandler(StringDecoder(CharsetUtil.UTF_8))
-
-                // HANDLER 3: Lógica de dominio
                 ch.pushHandler(object : ChannelInboundHandlerAdapter() {
 
                     override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
                         val jsonString = msg as String
-                        Log.i(TAG, "[RECEPTOR] JSON recibido: $jsonString")
+                        Log.i(TAG, "[RECEPTOR] Mensaje recibido (${jsonString.length} bytes)")
 
                         try {
-                            val record = json.decodeFromString<MedicalRecord>(jsonString)
+                            // Paso 1: leer el tipo del envelope
+                            val jsonElement = json.parseToJsonElement(jsonString)
+                            val type = jsonElement.jsonObject["type"]
+                                ?.jsonPrimitive?.content ?: TYPE_MEDICAL_RECORD
 
-                            // Lanzamos corutina para NO bloquear el EventLoop
-                            // de Netty. Bloquear el EventLoop degradaría el
-                            // rendimiento de TODAS las conexiones del nodo.
-                            serviceScope.launch {
-
-                                // PASO 1: Persistir en SQLite.
-                                // isMine = false: este registro viene del
-                                // peer remoto, no lo generamos nosotros.
-                                dbHelper.guardarRegistroMedico(
-                                    record.copy(isMine = false)
-                                )
-                                Log.d(TAG, "[RECEPTOR] Guardado en DB: id=${record.id}")
-
-                                // PASO 2: Emitir al SharedFlow.
-                                // La UI se actualiza en tiempo real.
-                                // Si no hay colectores, el emit descarta
-                                // el evento (el dato ya está en disco).
-                                _incomingMessages.emit(record)
-                                Log.d(TAG, "[RECEPTOR] Emitido al SharedFlow: id=${record.id}")
-
-                                // PASO 3: ACK después de persistir.
-                                // GARANTÍA SEMÁNTICA AT-LEAST-ONCE:
-                                // El ACK solo se envía si guardarRegistroMedico()
-                                // completó sin excepción.
-                                if (ctx.channel().isActive) {
-                                    ctx.writeAndFlush(
-                                        Unpooled.copiedBuffer("ACK\n", CharsetUtil.UTF_8)
-                                    )
-                                    Log.i(TAG, "[RECEPTOR] ACK enviado tras persistencia.")
-                                } else {
-                                    Log.w(TAG, "[RECEPTOR] Canal cerrado antes del ACK. " +
-                                            "El emisor reintentará (At-Least-Once).")
-                                }
+                            when (type) {
+                                TYPE_MEDICAL_RECORD -> handleMedicalRecord(ctx, jsonString)
+                                TYPE_LINK_DOCTOR    -> handleLinkDoctor(ctx, jsonString)
+                                else -> Log.w(TAG, "[RECEPTOR] Tipo desconocido: $type. Ignorando.")
                             }
 
                         } catch (e: Exception) {
-                            Log.e(TAG, "[RECEPTOR] JSON inválido: ${e.message}")
-                            Log.e(TAG, "[RECEPTOR] Contenido problemático: $jsonString")
+                            // Compatibilidad hacia atrás: si el JSON no tiene
+                            // campo "type", asumimos que es un MedicalRecord legacy
+                            Log.w(TAG, "[RECEPTOR] Sin campo type, intentando como MedicalRecord legacy")
+                            try {
+                                handleMedicalRecord(ctx, jsonString)
+                            } catch (e2: Exception) {
+                                Log.e(TAG, "[RECEPTOR] JSON inválido: ${e2.message}")
+                            }
                         }
                     }
 
@@ -229,40 +148,61 @@ class P2PMessagingService(
                         ctx.close()
                     }
                 })
-
                 return CompletableFuture.completedFuture(Unit)
             }
         }
     }
 
-    // ══════════════════════════════════════════════════════════════════
-    // FUNCIÓN 2: buildNode()
-    //
-    // Registra en el nodo DOS protocolos simultáneamente:
-    //   1. CircuitStopProtocol → infraestructura de relay.
-    //   2. buildReceiverBinding() → protocolo de aplicación MedP2P.
-    //
-    // Por qué listen("/ip4/0.0.0.0/tcp/0"):
-    //   Puerto 0 → el SO asigna un puerto libre automáticamente.
-    //   En móvil, fijar un puerto concreto fallaría si está ocupado.
-    // ══════════════════════════════════════════════════════════════════
+    private fun handleMedicalRecord(ctx: ChannelHandlerContext, jsonString: String) {
+        // Intenta deserializar como P2PEnvelope primero, luego como MedicalRecord directo
+        val record = try {
+            val envelope = json.decodeFromString<P2PEnvelope>(jsonString)
+            json.decodeFromString<MedicalRecord>(envelope.payload)
+        } catch (e: Exception) {
+            json.decodeFromString<MedicalRecord>(jsonString)
+        }
+
+        serviceScope.launch {
+            dbHelper.guardarRegistroMedico(record.copy(isMine = false), ownerPeerId)
+            Log.d(TAG, "[RECEPTOR] MedicalRecord guardado: id=${record.id}")
+            _incomingMessages.emit(record)
+            sendAck(ctx)
+        }
+    }
+
+    private fun handleLinkDoctor(ctx: ChannelHandlerContext, jsonString: String) {
+        try {
+            val envelope = json.decodeFromString<P2PEnvelope>(jsonString)
+            val payload  = json.decodeFromString<LinkDoctorPayload>(envelope.payload)
+
+            serviceScope.launch {
+                dbHelper.guardarMedicoVinculado(
+                    doctorPeerId = payload.doctorPeerId,
+                    doctorName   = payload.doctorName,
+                    ownerPeerId  = ownerPeerId
+                )
+                Log.i(TAG, "[RECEPTOR] Médico vinculado: ${payload.doctorName}")
+                sendAck(ctx)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "[RECEPTOR] Error procesando LINK_DOCTOR: ${e.message}")
+        }
+    }
+
+    private fun sendAck(ctx: ChannelHandlerContext) {
+        if (ctx.channel().isActive) {
+            ctx.writeAndFlush(Unpooled.copiedBuffer("ACK\n", CharsetUtil.UTF_8))
+            Log.i(TAG, "[RECEPTOR] ACK enviado.")
+        }
+    }
+
     private fun buildNode(privKey: PrivKey): Host {
         return host {
-            identity {
-                factory = { privKey }
-            }
-            transports {
-                add(::TcpTransport)
-            }
-            secureChannels {
-                add(::NoiseXXSecureChannel)
-            }
-            muxers {
-                add(StreamMuxerProtocol.getYamux())
-            }
-            network {
-                listen("/ip4/0.0.0.0/tcp/0")
-            }
+            identity { factory = { privKey } }
+            transports { add(::TcpTransport) }
+            secureChannels { add(::NoiseXXSecureChannel) }
+            muxers { add(StreamMuxerProtocol.getYamux()) }
+            network { listen("/ip4/0.0.0.0/tcp/0") }
             protocols {
                 add(CircuitStopProtocol.Binding(CircuitStopProtocol()))
                 add(buildReceiverBinding())
@@ -270,77 +210,76 @@ class P2PMessagingService(
         }
     }
 
-    // ══════════════════════════════════════════════════════════════════
-    // FUNCIÓN 3: start()
-    //
-    // Arranca el nodo y conecta al relay. Función suspending: se llama
-    // desde viewModelScope del DashboardViewModel (Dispatchers.IO).
-    // Lanza excepción si falla; el ViewModel la captura y actualiza
-    // el ConnectionStatus en la UI.
-    // ══════════════════════════════════════════════════════════════════
-    suspend fun start(privKey: PrivKey): Host = withContext(Dispatchers.IO) {
-        Log.d(TAG, "[START] Construyendo nodo con protocolo receptor registrado...")
+    suspend fun start(privKey: PrivKey, ownerPeerId: String = ""): Host = withContext(Dispatchers.IO) {
+        this@P2PMessagingService.ownerPeerId = ownerPeerId
+        Log.d(TAG, "[START] ownerPeerId=$ownerPeerId")
         val node = buildNode(privKey)
-
         node.start().get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         Log.i(TAG, "[START] Nodo arrancado. PeerId=${node.peerId}")
 
-        Log.d(TAG, "[START] Conectando al relay: $RELAY_ADDRESS")
         val relayMultiaddr = Multiaddr(RELAY_ADDRESS)
-        val relayPeerId    = PeerId.fromBase58(
-            RELAY_ADDRESS.substringAfterLast("/")
-        )
+        val relayPeerId    = PeerId.fromBase58(RELAY_ADDRESS.substringAfterLast("/"))
         node.network.connect(relayPeerId, relayMultiaddr)
             .get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
 
-        Log.i(TAG, "[START] ✅ Conectado al relay. Nodo listo para recibir mensajes.")
+        Log.i(TAG, "[START] ✅ Conectado al relay.")
         node
     }
 
-    // ══════════════════════════════════════════════════════════════════
-    // FUNCIÓN 4: sendMedicalRecord()
-    //
-    // Implementa el patrón "Transactional Outbox":
-    //   FASE 1 (Write-ahead): persistir en SQLite + encolar en sync_log
-    //   FASE 2 (Red): abrir stream P2P y enviar JSON terminado en '\n'
-    //   FASE 3 (Confirmación): esperar ACK → marcar sync_log DELIVERED
-    //
-    // Semántica At-Least-Once: el UUID del record actúa como clave de
-    // idempotencia (INSERT OR REPLACE en el receptor no duplica datos).
-    // ══════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
+    // sendMedicalRecord() — wraps en P2PEnvelope
+    // ══════════════════════════════════════════════════════════════
     suspend fun sendMedicalRecord(
         host: Host,
         destinationCircuitAddr: String,
         record: MedicalRecord
     ): Unit = withContext(Dispatchers.IO) {
+        dbHelper.guardarRegistroMedico(record.copy(isMine = true), ownerPeerId)
+        dbHelper.enqueueSyncLog(record.id, "historial_clinico", "SEND_PENDING", ownerPeerId)
 
-        // ── FASE 1: WRITE-AHEAD LOCAL ──────────────────────────────────
-        Log.d(TAG, "[SEND] Fase 1: Persistiendo localmente id=${record.id}")
-        dbHelper.guardarRegistroMedico(record.copy(isMine = true))
-
-        Log.d(TAG, "[SEND] Fase 1: Encolando en sync_log como SEND_PENDING id=${record.id}")
-        dbHelper.enqueueSyncLog(
-            recordId = record.id,
-            tabla    = "historial_clinico",
-            accion   = "SEND_PENDING"
+        val envelope = P2PEnvelope(
+            type    = TYPE_MEDICAL_RECORD,
+            payload = json.encodeToString(record)
         )
+        sendEnvelope(host, destinationCircuitAddr, json.encodeToString(envelope), record.id)
+    }
 
-        // ── FASES 2 y 3: RED + CONFIRMACIÓN ───────────────────────────
+    // ══════════════════════════════════════════════════════════════
+    // sendLinkDoctorMessage() — FIX FALLO 3
+    //
+    // Envía un mensaje LINK_DOCTOR al paciente para que guarde al
+    // médico en su tabla medico_vinculado. Se llama automáticamente
+    // desde DashboardViewModel.linkPatient() tras el INSERT local.
+    // ══════════════════════════════════════════════════════════════
+    suspend fun sendLinkDoctorMessage(
+        host: Host,
+        destinationCircuitAddr: String,
+        doctorPeerId: String,
+        doctorName: String
+    ): Unit = withContext(Dispatchers.IO) {
+        val payload  = LinkDoctorPayload(doctorPeerId, doctorName)
+        val envelope = P2PEnvelope(
+            type    = TYPE_LINK_DOCTOR,
+            payload = json.encodeToString(payload)
+        )
+        Log.i(TAG, "[LINK_DOCTOR] Enviando vinculación a $destinationCircuitAddr")
+        sendEnvelope(host, destinationCircuitAddr, json.encodeToString(envelope), doctorPeerId)
+    }
+
+    // ── Lógica común de envío de stream ──────────────────────────
+    private suspend fun sendEnvelope(
+        host: Host,
+        destinationCircuitAddr: String,
+        envelopeJson: String,
+        logId: String
+    ) = withContext(Dispatchers.IO) {
         try {
             val destMultiaddr = Multiaddr(destinationCircuitAddr)
-            val destPeerId    = PeerId.fromBase58(
-                destinationCircuitAddr.substringAfterLast("/")
-            )
-            Log.d(TAG, "[SEND] Fase 2: Abriendo stream hacia $destPeerId")
+            val destPeerId    = PeerId.fromBase58(destinationCircuitAddr.substringAfterLast("/"))
 
-            // Pipeline del lado EMISOR: necesita framer y decoder
-            // para poder leer el "ACK\n" de respuesta del receptor.
             val senderBinding = object : ProtocolBinding<Unit> {
                 override val protocolDescriptor = ProtocolDescriptor(PROTOCOL_ID)
-                override fun initChannel(
-                    ch: P2PChannel,
-                    selectedProtocol: String
-                ): CompletableFuture<Unit> {
+                override fun initChannel(ch: P2PChannel, selectedProtocol: String): CompletableFuture<Unit> {
                     ch.pushHandler(LineBasedFrameDecoder(MAX_FRAME_LENGTH))
                     ch.pushHandler(StringDecoder(CharsetUtil.UTF_8))
                     return CompletableFuture.completedFuture(Unit)
@@ -349,62 +288,34 @@ class P2PMessagingService(
 
             val stream = senderBinding
                 .dial(host, destPeerId, destMultiaddr)
-                .stream
-                .get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            Log.i(TAG, "[SEND] Fase 2: Stream establecido con $destPeerId")
+                .stream.get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
 
-            // CompletableFuture como puente Netty ↔ Corrutina.
-            // Registramos el lector del ACK ANTES de enviar el mensaje
-            // para evitar condición de carrera con peers muy rápidos.
             val ackFuture = CompletableFuture<String>()
             stream.pushHandler(object : ChannelInboundHandlerAdapter() {
                 override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
                     ackFuture.complete((msg as String).trim())
                 }
                 override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
-                    Log.e(TAG, "[SEND] Error leyendo ACK: ${cause.message}")
                     ackFuture.completeExceptionally(cause)
                     ctx.close()
                 }
             })
 
-            // Enviamos el JSON terminado en '\n' — delimitador obligatorio
-            // para que LineBasedFrameDecoder del receptor dispare channelRead.
-            val jsonString = json.encodeToString(record)
-            stream.writeAndFlush(
-                Unpooled.copiedBuffer("$jsonString\n", CharsetUtil.UTF_8)
-            )
-            Log.i(TAG, "[SEND] Fase 2: JSON enviado (${jsonString.length} bytes)")
+            stream.writeAndFlush(Unpooled.copiedBuffer("$envelopeJson\n", CharsetUtil.UTF_8))
+            Log.i(TAG, "[SEND] Enviado: $logId (${envelopeJson.length} bytes)")
 
-            // ── FASE 3: ESPERAR ACK ────────────────────────────────────
             val ackResponse = ackFuture.get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-
             if (ackResponse == "ACK") {
-                dbHelper.updateSyncLogStatus(record.id, "DELIVERED")
-                Log.i(TAG, "[SEND] ✅ Fase 3: DELIVERED confirmado. id=${record.id}")
-            } else {
-                Log.w(TAG, "[SEND] ⚠️ Respuesta inesperada: '$ackResponse'. Queda PENDING.")
+                dbHelper.updateSyncLogStatus(logId, "DELIVERED")
+                Log.i(TAG, "[SEND] ✅ DELIVERED: $logId")
             }
-
         } catch (e: Exception) {
-            // Fallo de red: el dato ya está en SQLite y en sync_log
-            // como PENDING. WorkManager puede reintentarlo más tarde.
-            Log.e(TAG, "[SEND] ❌ Error de red al enviar id=${record.id}: ${e.javaClass.simpleName}")
-            Log.e(TAG, "[SEND]   sync_log permanece PENDING para reintento futuro.")
+            Log.e(TAG, "[SEND] ❌ Error enviando $logId: ${e.javaClass.simpleName}")
         }
     }
 
-    // ══════════════════════════════════════════════════════════════════
-    // FUNCIÓN 5: shutdown()
-    //
-    // Cancela el serviceScope (y todas sus corutinas hijas).
-    // El Host NO se detiene aquí — es responsabilidad del ViewModel
-    // (que lo detiene en onCleared()). Separar responsabilidades evita
-    // que el ViewModel tenga una referencia a un nodo detenido sin saberlo.
-    // ══════════════════════════════════════════════════════════════════
     fun shutdown() {
-        Log.d(TAG, "[SHUTDOWN] Cancelando serviceScope...")
         serviceScope.cancel()
-        Log.i(TAG, "[SHUTDOWN] Servicio de mensajería detenido.")
+        Log.i(TAG, "[SHUTDOWN] Servicio detenido.")
     }
 }

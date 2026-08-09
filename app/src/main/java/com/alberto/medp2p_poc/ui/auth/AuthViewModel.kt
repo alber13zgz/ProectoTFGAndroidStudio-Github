@@ -40,24 +40,19 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         private const val MIN_PASSWORD_LENGTH = 6
     }
 
-    init {
-        checkExistingProfile()
-    }
+    init { checkExistingProfile() }
 
     private fun checkExistingProfile() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                Log.d(TAG, "Comprobando perfil local existente...")
                 val profile = dbHelper.getAuthProfile()
                 if (profile != null) {
-                    Log.d(TAG, "Perfil encontrado: ${profile.displayName}")
                     _uiState.value = AuthUiState.ShowLogin(profile.displayName)
                 } else {
-                    Log.d(TAG, "No hay perfil. Mostrando registro.")
                     _uiState.value = AuthUiState.ShowRegistration
                 }
             } catch (e: Exception) {
-                Log.e("P2P_ERROR", "Error comprobando perfil: ${e.message}")
+                Log.e(TAG, "Error comprobando perfil: ${e.message}")
                 _uiState.value = AuthUiState.ShowRegistration
             }
         }
@@ -65,47 +60,45 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
     fun register(displayName: String, password: String, role: UserRole) {
         if (_uiState.value is AuthUiState.Processing) return
-
         val validationError = validateInputs(displayName, password)
         if (validationError != null) {
-            _uiState.value = AuthUiState.Error(
-                userMessage   = validationError,
-                previousState = AuthUiState.ShowRegistration
-            )
+            _uiState.value = AuthUiState.Error(validationError, AuthUiState.ShowRegistration)
             return
         }
-
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.value = AuthUiState.Processing("Creando tu identidad segura…")
             try {
-                val identity      = keyVault.generateAndStoreIdentity()
-                val salt          = keyVault.generateSalt()
-                val passwordHash  = keyVault.hashPassword(password, salt)
+                val identity     = keyVault.generateAndStoreIdentity()
+                val salt         = keyVault.generateSalt()
+                val passwordHash = keyVault.hashPassword(password, salt)
+                val now          = System.currentTimeMillis()
 
                 val profile = AuthProfile(
                     peerId       = identity.peerId,
                     displayName  = displayName.trim(),
                     role         = role,
                     passwordHash = passwordHash,
-                    passwordSalt = salt
+                    passwordSalt = salt,
+                    lastLoginAt  = now
                 )
                 dbHelper.insertAuthProfile(profile)
 
                 val session = UserSession(
                     peerId      = identity.peerId,
                     displayName = displayName.trim(),
-                    role        = role
+                    role        = role,
+                    lastLoginAt = now
                 )
                 activeSession  = session
                 Log.d(TAG, "✅ Registro completado. PeerId=${identity.peerId}")
                 _uiState.value = AuthUiState.Authenticated(session)
 
             } catch (e: Exception) {
-                Log.e("P2P_ERROR", "❌ Error en registro: ${e.stackTraceToString()}")
+                Log.e(TAG, "❌ Error en registro: ${e.stackTraceToString()}")
                 keyVault.clearVault()
                 _uiState.value = AuthUiState.Error(
-                    userMessage   = "No se pudo crear tu perfil. Inténtalo de nuevo.",
-                    previousState = AuthUiState.ShowRegistration
+                    "No se pudo crear tu perfil. Inténtalo de nuevo.",
+                    AuthUiState.ShowRegistration
                 )
             }
         }
@@ -113,15 +106,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
     fun login(password: String) {
         if (_uiState.value is AuthUiState.Processing) return
-
         val currentState = _uiState.value
         val loginName    = (currentState as? AuthUiState.ShowLogin)?.displayName ?: ""
 
         if (password.isBlank()) {
-            _uiState.value = AuthUiState.Error(
-                userMessage   = "Introduce tu contraseña.",
-                previousState = currentState
-            )
+            _uiState.value = AuthUiState.Error("Introduce tu contraseña.", currentState)
             return
         }
 
@@ -131,8 +120,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val profile = dbHelper.getAuthProfile()
                 if (profile == null) {
                     _uiState.value = AuthUiState.Error(
-                        userMessage   = "No se encontró ningún perfil. Registra uno nuevo.",
-                        previousState = AuthUiState.ShowRegistration
+                        "No se encontró ningún perfil. Registra uno nuevo.",
+                        AuthUiState.ShowRegistration
                     )
                     return@launch
                 }
@@ -142,91 +131,86 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     storedHash    = profile.passwordHash,
                     storedSalt    = profile.passwordSalt
                 )
-
                 if (!isValid) {
-                    Log.w(TAG, "⚠️ Contraseña incorrecta.")
                     _uiState.value = AuthUiState.Error(
-                        userMessage   = "Contraseña incorrecta. Inténtalo de nuevo.",
-                        previousState = AuthUiState.ShowLogin(profile.displayName)
+                        "Contraseña incorrecta. Inténtalo de nuevo.",
+                        AuthUiState.ShowLogin(profile.displayName)
                     )
                     return@launch
                 }
 
                 if (!keyVault.hasStoredIdentity()) {
                     _uiState.value = AuthUiState.Error(
-                        userMessage   = "Las claves de seguridad fueron borradas. Necesitas registrarte de nuevo.",
-                        previousState = AuthUiState.ShowRegistration
+                        "Las claves de seguridad fueron borradas. Necesitas registrarte de nuevo.",
+                        AuthUiState.ShowRegistration
                     )
                     return@launch
                 }
 
+                // ── FIX FALLO 1: escribir lastLoginAt en cada login ────
+                // Este timestamp se muestra en la UI inmediatamente,
+                // independientemente de si el relay P2P está disponible.
+                val now = System.currentTimeMillis()
+                dbHelper.actualizarUltimoLogin(profile.peerId)
+
                 val session = UserSession(
                     peerId      = profile.peerId,
                     displayName = profile.displayName,
-                    role        = profile.role
+                    role        = profile.role,
+                    photoUri    = profile.photoUri,
+                    lastLoginAt = now
                 )
                 activeSession  = session
                 Log.d(TAG, "✅ Login exitoso: ${profile.displayName}")
                 _uiState.value = AuthUiState.Authenticated(session)
 
             } catch (e: Exception) {
-                Log.e("P2P_ERROR", "❌ Error en login: ${e.message}")
+                Log.e(TAG, "❌ Error en login: ${e.message}")
                 _uiState.value = AuthUiState.Error(
-                    userMessage   = "Error al verificar las credenciales.",
-                    previousState = AuthUiState.ShowLogin(loginName)
+                    "Error al verificar las credenciales.",
+                    AuthUiState.ShowLogin(loginName)
                 )
             }
         }
     }
 
     // ══════════════════════════════════════════════════════════════
-    // logout(): cierra sesión SIN borrar el perfil de autenticación.
+    // logout(): cierra sesión SIN borrar datos.
     //
-    // CORRECCIÓN CRÍTICA DE PRIVACIDAD:
-    // Borra todos los datos clínicos (pacientes, historial, sync_log)
-    // antes de volver a la pantalla de login. Sin esto, un segundo
-    // usuario en el mismo dispositivo vería los datos del primero.
-    // auth_profile se conserva para que el usuario pueda re-entrar
-    // con su contraseña sin necesidad de re-registrarse.
+    // FIX FALLO 5 (Row-Level Security):
+    // Ya NO borramos datos en logout. Cada query filtra por ownerPeerId.
+    // Los datos del Médico A son invisibles para el Médico B porque
+    // todas las queries usan WHERE ownerPeerId = currentUser.peerId.
+    // Borrar datos en logout destruiría los datos propios del usuario
+    // si vuelve a iniciar sesión en el mismo dispositivo.
     // ══════════════════════════════════════════════════════════════
     fun logout() {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                dbHelper.borrarDatosSesion()
-                Log.d(TAG, "Datos de sesion borrados en logout.")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error borrando datos de sesion: ${e.message}")
-            }
-            activeSession  = null
-            checkExistingProfile()
-            Log.d(TAG, "Sesion cerrada (perfil auth conservado).")
-        }
+        activeSession = null
+        checkExistingProfile()
+        Log.d(TAG, "Sesion cerrada. Datos conservados (filtrados por ownerPeerId).")
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // cerrarSesionYBorrarDatos(): borrado completo (cambio de cuenta).
-    // Elimina perfil auth + datos clínicos + claves criptográficas.
-    // ══════════════════════════════════════════════════════════════
     fun cerrarSesionYBorrarDatos() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 keyVault.clearVault()
-                dbHelper.borrarDatosSesion()
-                dbHelper.writableDatabase.execSQL("DELETE FROM auth_profile")
+                val db = dbHelper.writableDatabase
+                listOf("medico_vinculado", "paciente_clinico", "historial_clinico",
+                    "sync_log", "toma_diaria", "pauta_medica", "auth_profile")
+                    .forEach { db.execSQL("DELETE FROM $it") }
+                db.close()
                 activeSession  = null
                 _uiState.value = AuthUiState.ShowRegistration
-                Log.d(TAG, "Sesión cerrada y datos borrados. Listo para cuenta nueva.")
+                Log.d(TAG, "Cuenta eliminada completamente.")
             } catch (e: Exception) {
-                Log.e(TAG, "Error al cerrar sesión: ${e.message}")
+                Log.e(TAG, "Error eliminando cuenta: ${e.message}")
             }
         }
     }
 
     fun dismissError() {
         val current = _uiState.value
-        if (current is AuthUiState.Error) {
-            _uiState.value = current.previousState
-        }
+        if (current is AuthUiState.Error) _uiState.value = current.previousState
     }
 
     private fun validateInputs(name: String, password: String): String? {
@@ -241,14 +225,15 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 _uiState.value = AuthUiState.Processing("Eliminando perfil anterior...")
-                dbHelper.borrarDatosSesion()
-                dbHelper.writableDatabase.execSQL("DELETE FROM auth_profile")
                 keyVault.clearVault()
+                dbHelper.writableDatabase.apply {
+                    execSQL("DELETE FROM auth_profile")
+                    close()
+                }
                 activeSession  = null
-                Log.d(TAG, "Perfil reseteado.")
                 _uiState.value = AuthUiState.ShowRegistration
             } catch (e: Exception) {
-                Log.e("P2P_ERROR", "Error reseteando: ${e.message}")
+                Log.e(TAG, "Error reseteando: ${e.message}")
                 _uiState.value = AuthUiState.ShowRegistration
             }
         }

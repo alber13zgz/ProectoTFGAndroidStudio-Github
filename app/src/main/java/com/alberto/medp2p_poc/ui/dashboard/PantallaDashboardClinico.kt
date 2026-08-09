@@ -235,8 +235,10 @@ fun PantallaDashboardClinico(
                                 }
                             }
                             .addOnFailureListener {
-                                // En caso de fallo (ej. usuario cancela o sin permisos en versiones viejas)
+                                // Reabrir el sheet — NO abrir el diálogo manual automáticamente.
+                                // El usuario elige si quiere intentar el QR de nuevo o ir manual.
                                 showLinkSheet = true
+
                             }
                     }
                 )

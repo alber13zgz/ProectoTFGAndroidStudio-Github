@@ -42,22 +42,12 @@ private object NavColors {
 }
 
 sealed class ProfessionalRoute(
-    val route: String,
-    val title: String,
-    val icon: ImageVector
+    val route: String, val title: String, val icon: ImageVector
 ) {
     object Home     : ProfessionalRoute("home",     "Dashboard", Icons.Outlined.Home)
     object Patients : ProfessionalRoute("patients", "Pacientes", Icons.Outlined.People)
 }
 
-// ══════════════════════════════════════════════════════════════════════
-// JUSTIFICACIÓN ARQUITECTÓNICA: eliminación de onEnviarMensaje
-//
-// El callback onEnviarMensaje ha sido eliminado. El envío P2P ahora
-// ocurre dentro de PatientDetailViewModel.addClinicalNote(), que
-// recibe dashboardViewModel directamente. La Activity queda libre
-// de toda lógica de red (Principio de Responsabilidad Única).
-// ══════════════════════════════════════════════════════════════════════
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ClinicalAppNavigation(
@@ -67,65 +57,47 @@ fun ClinicalAppNavigation(
     onCerrarSesion: () -> Unit
 ) {
     val navController = rememberNavController()
-
-    val initials = userName
-        .split(" ")
-        .take(2)
-        .mapNotNull { it.firstOrNull()?.uppercase() }
-        .joinToString("")
+    val initials = userName.split(" ").take(2)
+        .mapNotNull { it.firstOrNull()?.uppercase() }.joinToString("")
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        "Hola, $userName",
+                    Text("Hola, $userName",
                         style = MaterialTheme.typography.titleMedium,
-                        color = NavColors.PrimaryBlue
-                    )
+                        color = NavColors.PrimaryBlue)
                 },
                 navigationIcon = {
                     Box(
                         modifier = Modifier
-                            .padding(start = 12.dp)
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(NavColors.PrimaryBlue)
+                            .padding(start = 12.dp).size(38.dp)
+                            .clip(CircleShape).background(NavColors.PrimaryBlue)
                             .clickable {
-                                navController.navigate("profile_edit") {
-                                    launchSingleTop = true
-                                }
+                                navController.navigate("profile_edit") { launchSingleTop = true }
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = initials.ifBlank { "?" },
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
+                        Text(text = initials.ifBlank { "?" }, fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold, color = Color.White)
                     }
                 },
                 actions = {
                     IconButton(onClick = onCerrarSesion) {
-                        Icon(
-                            imageVector = Icons.Outlined.ExitToApp,
+                        Icon(imageVector = Icons.Outlined.ExitToApp,
                             contentDescription = "Cerrar Sesion",
-                            tint = MaterialTheme.colorScheme.error
-                        )
+                            tint = MaterialTheme.colorScheme.error)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = NavColors.SurfaceWhite
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = NavColors.SurfaceWhite)
             )
         },
         containerColor = NavColors.SurfaceWhite
     ) { innerPadding ->
         NavHost(
-            navController = navController,
+            navController    = navController,
             startDestination = if (userRole == UserRole.PROFESSIONAL) "home" else "patient_home",
-            modifier = Modifier.padding(innerPadding)
+            modifier         = Modifier.padding(innerPadding)
         ) {
             // ══════════════════════════════════════════
             // ══ RUTAS PROFESIONAL ════════════════════
@@ -133,11 +105,11 @@ fun ClinicalAppNavigation(
             composable("home") {
                 LaunchedEffect(Unit) { dashboardViewModel.refreshCounters() }
                 PantallaDashboardClinico(
-                    viewModel = dashboardViewModel,
+                    viewModel            = dashboardViewModel,
                     onNavigateToPatients = {
                         navController.navigate("patients") { launchSingleTop = true }
                     },
-                    onNavigateToProfile = {
+                    onNavigateToProfile  = {
                         navController.navigate("profile_edit") { launchSingleTop = true }
                     }
                 )
@@ -146,7 +118,7 @@ fun ClinicalAppNavigation(
             composable("patients") {
                 val patientsViewModel: PatientsViewModel = viewModel()
                 PantallaPacientes(
-                    viewModel = patientsViewModel,
+                    viewModel              = patientsViewModel,
                     onPacienteSeleccionado = { peerId ->
                         navController.navigate("patient_detail/$peerId")
                     }
@@ -154,25 +126,23 @@ fun ClinicalAppNavigation(
             }
 
             composable(
-                route = "patient_detail/{peerId}",
+                route     = "patient_detail/{peerId}",
                 arguments = listOf(navArgument("peerId") { type = NavType.StringType })
             ) { backStackEntry ->
-                val peerId = backStackEntry.arguments?.getString("peerId") ?: ""
+                val peerId        = backStackEntry.arguments?.getString("peerId") ?: ""
                 val detailViewModel: PatientDetailViewModel = viewModel()
 
-                // ── Activar recepción P2P en tiempo real ──────────────
-                // LaunchedEffect con peerId como clave garantiza que esta
-                // corutina se lanza una sola vez al entrar en la pantalla,
-                // no en cada recomposición. Si el usuario navega a otro
-                // paciente, se cancela y se relanza con el nuevo peerId.
+                // Activar recepción P2P en tiempo real para este paciente.
+                // LaunchedEffect(peerId) garantiza una sola corutina por paciente.
                 LaunchedEffect(peerId) {
                     detailViewModel.observeIncomingMessages(dashboardViewModel, peerId)
                 }
 
                 PantallaDetallePaciente(
-                    peerId    = peerId,
-                    viewModel = detailViewModel,
-                    onBack    = { navController.popBackStack() }
+                    peerId             = peerId,
+                    viewModel          = detailViewModel,
+                    dashboardViewModel = dashboardViewModel,  // ← para envío P2P
+                    onBack             = { navController.popBackStack() }
                 )
             }
 

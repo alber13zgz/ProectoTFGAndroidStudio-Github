@@ -88,8 +88,7 @@ fun PantallaDetallePaciente(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    LaunchedEffect(peerId) { viewModel.loadPatientDetail(peerId) }
-
+    LaunchedEffect(peerId) { viewModel.loadPatientDetail(peerId, dashboardViewModel.currentOwnerPeerId) }
     when {
         state.isLoading -> {
             Box(

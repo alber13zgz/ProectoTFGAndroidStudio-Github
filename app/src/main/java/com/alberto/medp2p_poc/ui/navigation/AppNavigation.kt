@@ -132,6 +132,13 @@ fun ClinicalAppNavigation(
 
             composable("patients") {
                 val patientsViewModel: PatientsViewModel = viewModel()
+
+                // Inicializar con el ownerPeerId del usuario activo.
+                // LaunchedEffect garantiza que se llama una sola vez por composición.
+                LaunchedEffect(Unit) {
+                    patientsViewModel.init(dashboardViewModel.currentOwnerPeerId)
+                }
+
                 PantallaPacientes(
                     viewModel              = patientsViewModel,
                     onPacienteSeleccionado = { peerId ->

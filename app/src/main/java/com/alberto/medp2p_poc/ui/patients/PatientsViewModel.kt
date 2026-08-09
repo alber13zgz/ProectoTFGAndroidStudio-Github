@@ -10,21 +10,21 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
-// ──────────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
 // JUSTIFICACIÓN ARQUITECTÓNICA:
-// PatientsViewModel gestiona la lista completa de pacientes, el filtro
-// de búsqueda y el filtro de favoritos. La lista en memoria (_allPatients)
-// se combina con _searchQuery y _filterFavorites para producir un
-// StateFlow<List<Patient>> filtrado que la UI observa directamente.
+// PatientsViewModel gestiona la lista de pacientes del usuario activo.
 //
-// Toda operación de DB corre en Dispatchers.IO. La UI nunca toca
-// SQLite ni sabe cómo se persisten los datos. MVVM limpio.
-// ──────────────────────────────────────────────────────────────────────
+// FIX Row-Level Security: ownerPeerId se establece una sola vez en
+// init() y se usa en todas las queries para filtrar exclusivamente
+// los pacientes que pertenecen al usuario logueado. Sin esto, un
+// médico vería los pacientes de otro médico en el mismo dispositivo.
+//
+// init() se llama desde AppNavigation justo después de viewModel(),
+// pasando dashboardViewModel.currentOwnerPeerId.
+// ══════════════════════════════════════════════════════════════════════
 
-/** Estado visual de la pantalla de pacientes. */
 data class PatientsUiState(
     val patients: List<Patient> = emptyList(),
     val isLoading: Boolean = true,
@@ -40,39 +40,42 @@ class PatientsViewModel(application: Application) : AndroidViewModel(application
     private val _uiState = MutableStateFlow(PatientsUiState())
     val uiState: StateFlow<PatientsUiState> = _uiState.asStateFlow()
 
-    // ── Datos internos para filtrado reactivo ──
     private var allPatients: List<Patient> = emptyList()
+
+    // ownerPeerId del usuario activo — se establece en init()
+    // antes de cualquier llamada a la DB.
+    private var ownerPeerId: String = ""
 
     companion object {
         private const val TAG = "P2P_PATIENTS"
     }
 
-    init {
+    // ══════════════════════════════════════════════════════════════
+    // init(): debe llamarse desde AppNavigation pasando el ownerPeerId
+    // del usuario logueado antes de que la pantalla empiece a mostrar
+    // datos. Si ownerPeerId ya está establecido, no recarga.
+    // ══════════════════════════════════════════════════════════════
+    fun init(ownerPeerId: String) {
+        if (this.ownerPeerId == ownerPeerId) return  // ya inicializado, evitar recarga innecesaria
+        this.ownerPeerId = ownerPeerId
         loadPatients()
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // ══ CARGA DE DATOS ══════════════════════════════════════════
-    // ════════════════════��═════════════════════════════════════════
-
     fun loadPatients() {
+        if (ownerPeerId.isBlank()) return  // no cargar si no hay usuario activo
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.value = _uiState.value.copy(isLoading = true)
             try {
-                val patients = dbHelper.obtenerPacientesClinico()
-                allPatients = patients
+                val patients = dbHelper.obtenerPacientesClinico(ownerPeerId)
+                allPatients  = patients
                 applyFilters()
-                Log.d(TAG, "Cargados ${patients.size} pacientes.")
+                Log.d(TAG, "Cargados ${patients.size} pacientes para owner=$ownerPeerId")
             } catch (e: Exception) {
-                Log.e("P2P_ERROR", "Error cargando pacientes: ${e.message}")
+                Log.e(TAG, "Error cargando pacientes: ${e.message}")
                 _uiState.value = _uiState.value.copy(isLoading = false)
             }
         }
     }
-
-    // ══════════════════════════════════════════════════════════════
-    // ══ BÚSQUEDA Y FILTROS ══════════════════════════════════════
-    // ══════════════════════════════════════════════════════════════
 
     fun updateSearchQuery(query: String) {
         _uiState.value = _uiState.value.copy(searchQuery = query)
@@ -80,14 +83,12 @@ class PatientsViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun toggleFavoriteFilter() {
-        _uiState.value = _uiState.value.copy(
-            filterFavorites = !_uiState.value.filterFavorites
-        )
+        _uiState.value = _uiState.value.copy(filterFavorites = !_uiState.value.filterFavorites)
         applyFilters()
     }
 
     private fun applyFilters() {
-        val query = _uiState.value.searchQuery.trim().lowercase()
+        val query    = _uiState.value.searchQuery.trim().lowercase()
         val onlyFavs = _uiState.value.filterFavorites
 
         val filtered = allPatients.filter { patient ->
@@ -99,54 +100,43 @@ class PatientsViewModel(application: Application) : AndroidViewModel(application
         }
 
         _uiState.value = _uiState.value.copy(
-            patients = filtered,
+            patients   = filtered,
             totalCount = allPatients.size,
-            isLoading = false
+            isLoading  = false
         )
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // ══ OPERACIONES CRUD ════════════════════════════════════════
-    // ══════════════════════════════════════════════════════════════
-
-    /**
-     * Vincula un nuevo paciente al sistema.
-     * @param fullName Nombre completo del paciente.
-     * @param peerId Identificador de red (escaneado del QR o introducido).
-     * @param allergies Alergias conocidas (opcional).
-     */
     fun linkPatient(fullName: String, peerId: String, allergies: String = "") {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val colorIndex = (fullName.hashCode() and 0x7FFFFFFF) % 8
                 val patient = Patient(
-                    fullName = fullName.trim(),
-                    peerId = peerId.trim(),
-                    allergies = allergies.trim(),
-                    avatarColorIndex = colorIndex
+                    fullName         = fullName.trim(),
+                    peerId           = peerId.trim(),
+                    allergies        = allergies.trim(),
+                    avatarColorIndex = colorIndex,
+                    lastSyncAt       = System.currentTimeMillis()
                 )
-                dbHelper.insertarPacienteClinico(patient)
-                Log.d(TAG, "✅ Paciente vinculado: ${patient.fullName}")
-                loadPatients() // Refresca la lista completa
+                dbHelper.insertarPacienteClinico(patient, ownerPeerId)
+                Log.d(TAG, "✅ Paciente vinculado: ${patient.fullName} (owner=$ownerPeerId)")
+                loadPatients()
             } catch (e: Exception) {
-                Log.e("P2P_ERROR", "Error vinculando paciente: ${e.message}")
+                Log.e(TAG, "Error vinculando paciente: ${e.message}")
             }
         }
     }
 
-    /** Marca o desmarca un paciente como favorito. */
     fun toggleFavorite(patientId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 dbHelper.toggleFavoritoPaciente(patientId)
                 loadPatients()
             } catch (e: Exception) {
-                Log.e("P2P_ERROR", "Error toggle favorito: ${e.message}")
+                Log.e(TAG, "Error toggle favorito: ${e.message}")
             }
         }
     }
 
-    /** Elimina un paciente vinculado. */
     fun removePatient(patientId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -154,7 +144,7 @@ class PatientsViewModel(application: Application) : AndroidViewModel(application
                 Log.d(TAG, "Paciente eliminado: $patientId")
                 loadPatients()
             } catch (e: Exception) {
-                Log.e("P2P_ERROR", "Error eliminando paciente: ${e.message}")
+                Log.e(TAG, "Error eliminando paciente: ${e.message}")
             }
         }
     }

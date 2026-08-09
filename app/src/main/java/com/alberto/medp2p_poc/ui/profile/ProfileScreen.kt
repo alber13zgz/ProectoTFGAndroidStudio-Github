@@ -284,8 +284,7 @@ fun ProfileScreen(
             // ══════════════════════════════════════════
             Button(
                 onClick = {
-                    // TODO: Guardar en DB via ViewModel
-                    // dashboardViewModel.updateProfile(displayName, bio)
+                    dashboardViewModel.updateDisplayName(displayName)
                     saved = true
                 },
                 modifier = Modifier

@@ -564,4 +564,49 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             db.close()
         }
     }
+    // ══════════════════════════════════════════════════════════════
+    // ══ GESTIÓN DE SESIÓN ═══════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
+
+    fun actualizarNombreDisplay(nuevoNombre: String) {
+        val db = this.writableDatabase
+        try {
+            db.execSQL("UPDATE auth_profile SET displayName = ?", arrayOf(nuevoNombre))
+            Log.d("P2P_TFG", "[DB] Nombre actualizado: $nuevoNombre")
+        } finally {
+            db.close()
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // JUSTIFICACIÓN: La BD es única para toda la app (SQLite único).
+    // Al cerrar sesión hay que borrar todos los datos clínicos del
+    // usuario saliente. Si no, otro usuario que inicie sesión en el
+    // mismo dispositivo vería los datos del anterior — fallo crítico
+    // de privacidad en una app médica.
+    //
+    // auth_profile NO se borra aquí: AuthViewModel decide si conservar
+    // el perfil (logout normal) o borrarlo (cambio de cuenta completo).
+    // ══════════════════════════════════════════════════════════════
+    fun borrarDatosSesion() {
+        val db = this.writableDatabase
+        try {
+            db.beginTransaction()
+            db.execSQL("DELETE FROM paciente_clinico")
+            db.execSQL("DELETE FROM historial_clinico")
+            db.execSQL("DELETE FROM sync_log")
+            db.execSQL("DELETE FROM toma_diaria")
+            db.execSQL("DELETE FROM pauta_medica")
+            db.execSQL("DELETE FROM paciente")
+            db.execSQL("DELETE FROM usuario")
+            db.setTransactionSuccessful()
+            Log.i("P2P_TFG", "[DB] Datos de sesion borrados correctamente.")
+        } finally {
+            db.endTransaction()
+            db.close()
+        }
+    }
+
+
+
 }

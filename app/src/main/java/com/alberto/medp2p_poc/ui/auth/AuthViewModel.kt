@@ -1,7 +1,6 @@
 package com.alberto.medp2p_poc.ui.auth
 
 import android.app.Application
-import android.util.Base64
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -34,7 +33,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         private set
 
     private val keyVault = KeyVaultManager(application)
-    private val dbHelper = AppDatabaseHelper(application)
+    private val dbHelper  = AppDatabaseHelper(application)
 
     companion object {
         private const val TAG = "P2P_AUTH"
@@ -50,7 +49,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 Log.d(TAG, "Comprobando perfil local existente...")
                 val profile = dbHelper.getAuthProfile()
-
                 if (profile != null) {
                     Log.d(TAG, "Perfil encontrado: ${profile.displayName}")
                     _uiState.value = AuthUiState.ShowLogin(profile.displayName)
@@ -71,7 +69,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         val validationError = validateInputs(displayName, password)
         if (validationError != null) {
             _uiState.value = AuthUiState.Error(
-                userMessage = validationError,
+                userMessage   = validationError,
                 previousState = AuthUiState.ShowRegistration
             )
             return
@@ -79,37 +77,34 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.value = AuthUiState.Processing("Creando tu identidad segura…")
-
             try {
-                val identity = keyVault.generateAndStoreIdentity()
-                val salt = keyVault.generateSalt()
-                val passwordHash = keyVault.hashPassword(password, salt)
+                val identity      = keyVault.generateAndStoreIdentity()
+                val salt          = keyVault.generateSalt()
+                val passwordHash  = keyVault.hashPassword(password, salt)
 
                 val profile = AuthProfile(
-                    peerId = identity.peerId,
-                    displayName = displayName.trim(),
-                    role = role,
+                    peerId       = identity.peerId,
+                    displayName  = displayName.trim(),
+                    role         = role,
                     passwordHash = passwordHash,
                     passwordSalt = salt
                 )
                 dbHelper.insertAuthProfile(profile)
 
                 val session = UserSession(
-                    peerId = identity.peerId,
+                    peerId      = identity.peerId,
                     displayName = displayName.trim(),
-                    role = role
+                    role        = role
                 )
-                activeSession = session
-
+                activeSession  = session
                 Log.d(TAG, "✅ Registro completado. PeerId=${identity.peerId}")
                 _uiState.value = AuthUiState.Authenticated(session)
 
             } catch (e: Exception) {
                 Log.e("P2P_ERROR", "❌ Error en registro: ${e.stackTraceToString()}")
                 keyVault.clearVault()
-
                 _uiState.value = AuthUiState.Error(
-                    userMessage = "No se pudo crear tu perfil. Inténtalo de nuevo.",
+                    userMessage   = "No se pudo crear tu perfil. Inténtalo de nuevo.",
                     previousState = AuthUiState.ShowRegistration
                 )
             }
@@ -120,11 +115,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         if (_uiState.value is AuthUiState.Processing) return
 
         val currentState = _uiState.value
-        val loginName = (currentState as? AuthUiState.ShowLogin)?.displayName ?: ""
+        val loginName    = (currentState as? AuthUiState.ShowLogin)?.displayName ?: ""
 
         if (password.isBlank()) {
             _uiState.value = AuthUiState.Error(
-                userMessage = "Introduce tu contraseña.",
+                userMessage   = "Introduce tu contraseña.",
                 previousState = currentState
             )
             return
@@ -132,12 +127,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.value = AuthUiState.Processing("Verificando credenciales…")
-
             try {
                 val profile = dbHelper.getAuthProfile()
                 if (profile == null) {
                     _uiState.value = AuthUiState.Error(
-                        userMessage = "No se encontró ningún perfil. Registra uno nuevo.",
+                        userMessage   = "No se encontró ningún perfil. Registra uno nuevo.",
                         previousState = AuthUiState.ShowRegistration
                     )
                     return@launch
@@ -145,14 +139,14 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                 val isValid = keyVault.verifyPassword(
                     inputPassword = password,
-                    storedHash = profile.passwordHash,
-                    storedSalt = profile.passwordSalt
+                    storedHash    = profile.passwordHash,
+                    storedSalt    = profile.passwordSalt
                 )
 
                 if (!isValid) {
                     Log.w(TAG, "⚠️ Contraseña incorrecta.")
                     _uiState.value = AuthUiState.Error(
-                        userMessage = "Contraseña incorrecta. Inténtalo de nuevo.",
+                        userMessage   = "Contraseña incorrecta. Inténtalo de nuevo.",
                         previousState = AuthUiState.ShowLogin(profile.displayName)
                     )
                     return@launch
@@ -160,26 +154,25 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (!keyVault.hasStoredIdentity()) {
                     _uiState.value = AuthUiState.Error(
-                        userMessage = "Las claves de seguridad fueron borradas. Necesitas registrarte de nuevo.",
+                        userMessage   = "Las claves de seguridad fueron borradas. Necesitas registrarte de nuevo.",
                         previousState = AuthUiState.ShowRegistration
                     )
                     return@launch
                 }
 
                 val session = UserSession(
-                    peerId = profile.peerId,
+                    peerId      = profile.peerId,
                     displayName = profile.displayName,
-                    role = profile.role
+                    role        = profile.role
                 )
-                activeSession = session
-
+                activeSession  = session
                 Log.d(TAG, "✅ Login exitoso: ${profile.displayName}")
                 _uiState.value = AuthUiState.Authenticated(session)
 
             } catch (e: Exception) {
                 Log.e("P2P_ERROR", "❌ Error en login: ${e.message}")
                 _uiState.value = AuthUiState.Error(
-                    userMessage = "Error al verificar las credenciales.",
+                    userMessage   = "Error al verificar las credenciales.",
                     previousState = AuthUiState.ShowLogin(loginName)
                 )
             }
@@ -187,20 +180,40 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ══════════════════════════════════════════════════════════════
-    // ══ NUEVO: CIERRE DE SESIÓN MULTI-CUENTA (TESTING PoC) ═══════
+    // logout(): cierra sesión SIN borrar el perfil de autenticación.
+    //
+    // CORRECCIÓN CRÍTICA DE PRIVACIDAD:
+    // Borra todos los datos clínicos (pacientes, historial, sync_log)
+    // antes de volver a la pantalla de login. Sin esto, un segundo
+    // usuario en el mismo dispositivo vería los datos del primero.
+    // auth_profile se conserva para que el usuario pueda re-entrar
+    // con su contraseña sin necesidad de re-registrarse.
     // ══════════════════════════════════════════════════════════════
+    fun logout() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                dbHelper.borrarDatosSesion()
+                Log.d(TAG, "Datos de sesion borrados en logout.")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error borrando datos de sesion: ${e.message}")
+            }
+            activeSession  = null
+            checkExistingProfile()
+            Log.d(TAG, "Sesion cerrada (perfil auth conservado).")
+        }
+    }
 
+    // ══════════════════════════════════════════════════════════════
+    // cerrarSesionYBorrarDatos(): borrado completo (cambio de cuenta).
+    // Elimina perfil auth + datos clínicos + claves criptográficas.
+    // ══════════════════════════════════════════════════════════════
     fun cerrarSesionYBorrarDatos() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // 1. Borrar bóveda de claves
                 keyVault.clearVault()
-
-                // 2. Borrar perfil de SQLite (asumiendo que la tabla se llama auth_profile)
+                dbHelper.borrarDatosSesion()
                 dbHelper.writableDatabase.execSQL("DELETE FROM auth_profile")
-
-                // 3. Limpiar estado en memoria
-                activeSession = null
+                activeSession  = null
                 _uiState.value = AuthUiState.ShowRegistration
                 Log.d(TAG, "Sesión cerrada y datos borrados. Listo para cuenta nueva.")
             } catch (e: Exception) {
@@ -228,33 +241,17 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 _uiState.value = AuthUiState.Processing("Eliminando perfil anterior...")
-
-                val db = dbHelper.writableDatabase
-                db.execSQL("DELETE FROM auth_profile")
-                db.close()
-
+                dbHelper.borrarDatosSesion()
+                dbHelper.writableDatabase.execSQL("DELETE FROM auth_profile")
                 keyVault.clearVault()
-                activeSession = null
-
+                activeSession  = null
                 Log.d(TAG, "Perfil reseteado.")
                 _uiState.value = AuthUiState.ShowRegistration
-
             } catch (e: Exception) {
                 Log.e("P2P_ERROR", "Error reseteando: ${e.message}")
                 _uiState.value = AuthUiState.ShowRegistration
             }
         }
-    }
-    /**
-     * Cierra la sesion SIN borrar el perfil.
-     * El usuario vuelve a la pantalla de login y puede re-entrar
-     * con su contrasena. No se pierde nada.
-     */
-    fun logout() {
-        activeSession = null
-        // Recargamos el perfil existente → mostrara ShowLogin
-        checkExistingProfile()
-        Log.d(TAG, "Sesion cerrada (perfil conservado).")
     }
 
     fun getKeyVault(): KeyVaultManager = keyVault

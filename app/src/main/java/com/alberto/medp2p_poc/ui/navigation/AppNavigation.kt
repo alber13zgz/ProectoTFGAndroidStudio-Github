@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -57,36 +58,58 @@ fun ClinicalAppNavigation(
     onCerrarSesion: () -> Unit
 ) {
     val navController = rememberNavController()
-    val initials = userName.split(" ").take(2)
-        .mapNotNull { it.firstOrNull()?.uppercase() }.joinToString("")
+
+    // ── FIX: nombre reactivo desde el ViewModel ───────────────────
+    // userName viene del momento del login y queda congelado.
+    // dashboardData.displayName se actualiza en tiempo real cuando
+    // el usuario guarda cambios en ProfileScreen, por lo que el
+    // avatar del TopAppBar refleja el nombre actual sin reiniciar.
+    val dashboardData by dashboardViewModel.dashboard.collectAsStateWithLifecycle()
+    val currentName   = dashboardData.displayName.ifBlank { userName }
+
+    val initials = currentName
+        .split(" ")
+        .take(2)
+        .mapNotNull { it.firstOrNull()?.uppercase() }
+        .joinToString("")
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text("Hola, $userName",
+                    Text(
+                        "Hola, $currentName",   // ← usa currentName reactivo
                         style = MaterialTheme.typography.titleMedium,
-                        color = NavColors.PrimaryBlue)
+                        color = NavColors.PrimaryBlue
+                    )
                 },
                 navigationIcon = {
                     Box(
                         modifier = Modifier
-                            .padding(start = 12.dp).size(38.dp)
-                            .clip(CircleShape).background(NavColors.PrimaryBlue)
+                            .padding(start = 12.dp)
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(NavColors.PrimaryBlue)
                             .clickable {
                                 navController.navigate("profile_edit") { launchSingleTop = true }
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(text = initials.ifBlank { "?" }, fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(
+                            text       = initials.ifBlank { "?" },
+                            fontSize   = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color      = Color.White
+                        )
                     }
                 },
                 actions = {
                     IconButton(onClick = onCerrarSesion) {
-                        Icon(imageVector = Icons.Outlined.ExitToApp,
+                        Icon(
+                            imageVector        = Icons.Outlined.ExitToApp,
                             contentDescription = "Cerrar Sesion",
-                            tint = MaterialTheme.colorScheme.error)
+                            tint               = MaterialTheme.colorScheme.error
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = NavColors.SurfaceWhite)
@@ -129,11 +152,9 @@ fun ClinicalAppNavigation(
                 route     = "patient_detail/{peerId}",
                 arguments = listOf(navArgument("peerId") { type = NavType.StringType })
             ) { backStackEntry ->
-                val peerId        = backStackEntry.arguments?.getString("peerId") ?: ""
+                val peerId          = backStackEntry.arguments?.getString("peerId") ?: ""
                 val detailViewModel: PatientDetailViewModel = viewModel()
 
-                // Activar recepción P2P en tiempo real para este paciente.
-                // LaunchedEffect(peerId) garantiza una sola corutina por paciente.
                 LaunchedEffect(peerId) {
                     detailViewModel.observeIncomingMessages(dashboardViewModel, peerId)
                 }
@@ -141,7 +162,7 @@ fun ClinicalAppNavigation(
                 PantallaDetallePaciente(
                     peerId             = peerId,
                     viewModel          = detailViewModel,
-                    dashboardViewModel = dashboardViewModel,  // ← para envío P2P
+                    dashboardViewModel = dashboardViewModel,
                     onBack             = { navController.popBackStack() }
                 )
             }

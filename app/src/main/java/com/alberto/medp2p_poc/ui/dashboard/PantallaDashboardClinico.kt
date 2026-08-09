@@ -236,8 +236,7 @@ fun PantallaDashboardClinico(
                             }
                             .addOnFailureListener {
                                 // En caso de fallo (ej. usuario cancela o sin permisos en versiones viejas)
-                                scannedPeerId = ""
-                                showManualDialog = true
+                                showLinkSheet = true
                             }
                     }
                 )

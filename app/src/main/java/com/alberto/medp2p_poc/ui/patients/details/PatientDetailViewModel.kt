@@ -16,30 +16,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-// ══════════════════════════════════════════════════════════════════════
-// JUSTIFICACIÓN ARQUITECTÓNICA:
-// PatientDetailViewModel centraliza toda la información clínica de UN
-// paciente concreto. Carga en paralelo (Dispatchers.IO) los datos
-// personales, las medicaciones activas y el historial médico.
-//
-// NUEVO: recibe referencia a DashboardViewModel para:
-//   1. Enviar notas clínicas por P2P al paciente (sendRecord).
-//   2. Observar el SharedFlow de mensajes P2P entrantes y actualizar
-//      la UI en tiempo real sin recargar desde SQLite.
-// ══════════════════════════════════════════════════════════════════════
-
 data class ActiveMedication(
     val medication: Medicamento,
     val prescription: PautaMedica,
     val nextDoseLabel: String = ""
 )
 
-// ── Estado del último envío P2P para feedback visual en la UI ─────────
 sealed class SendResult {
-    object Idle      : SendResult()  // Sin operación en curso
-    object Sending   : SendResult()  // Enviando por P2P...
-    object Delivered : SendResult()  // ACK recibido — entregado
-    object SavedOnly : SendResult()  // Sin red — guardado local, pendiente
+    object Idle      : SendResult()
+    object Sending   : SendResult()
+    object Delivered : SendResult()
+    object SavedOnly : SendResult()
 }
 
 data class PatientDetailState(
@@ -58,18 +45,26 @@ class PatientDetailViewModel(application: Application) : AndroidViewModel(applic
     private val _state = MutableStateFlow(PatientDetailState())
     val state: StateFlow<PatientDetailState> = _state.asStateFlow()
 
+    // ── ownerPeerId: se establece en loadPatientDetail() y se reutiliza
+    // en addClinicalNote() para todas las queries a la DB.
+    // Se guarda en la instancia porque loadPatientDetail puede llamarse
+    // varias veces (refresh) y siempre debe usar el mismo owner.
+    private var ownerPeerId: String = ""
+
     companion object {
         private const val TAG = "P2P_DETAIL"
     }
 
     // ══════════════════════════════════════════════════════════════
-    // CARGA INICIAL
-    // Se llama una vez al entrar en pantalla via LaunchedEffect(peerId)
+    // loadPatientDetail()
+    //
+    // Recibe ownerPeerId del DashboardViewModel para filtrar las
+    // queries por el usuario activo (Row-Level Security).
+    // Se llama desde AppNavigation con LaunchedEffect(peerId).
     // ══════════════════════════════════════════════════════════════
-    fun loadPatientDetail(peerId: String) {
+    fun loadPatientDetail(peerId: String, ownerPeerId: String) {
+        this.ownerPeerId = ownerPeerId
         viewModelScope.launch(Dispatchers.IO) {
-            val patient = dbHelper.obtenerPacienteClinicoPorPeerId(peerId, ownerPeerId)
-            val history = dbHelper.obtenerHistorial(peerId, ownerPeerId)
             _state.value = _state.value.copy(isLoading = true, errorMessage = null)
             try {
                 val patient = dbHelper.obtenerPacienteClinicoPorPeerId(peerId, ownerPeerId)
@@ -81,8 +76,10 @@ class PatientDetailViewModel(application: Application) : AndroidViewModel(applic
                     )
                     return@launch
                 }
+
                 val medications = dbHelper.obtenerMedicacionesActivas(peerId)
-                val history = dbHelper.obtenerHistorial(peerId, ownerPeerId)
+                val history     = dbHelper.obtenerHistorial(peerId, ownerPeerId)
+
                 _state.value = PatientDetailState(
                     patient           = patient,
                     activeMedications = medications,
@@ -103,14 +100,11 @@ class PatientDetailViewModel(application: Application) : AndroidViewModel(applic
     }
 
     // ══════════════════════════════════════════════════════════════
-    // OBSERVAR MENSAJES P2P ENTRANTES EN TIEMPO REAL
+    // observeIncomingMessages()
     //
-    // Colecta el SharedFlow de DashboardViewModel. Cada MedicalRecord
-    // que llega por P2P y pertenece a este paciente se añade al estado
+    // Colecta el SharedFlow del DashboardViewModel. Cuando llega
+    // un MedicalRecord para este paciente, se añade al estado
     // directamente sin recargar desde SQLite (O(1), sin parpadeo).
-    //
-    // Se activa desde AppNavigation con LaunchedEffect(peerId) para
-    // garantizar una sola corutina por entrada en pantalla.
     // ══════════════════════════════════════════════════════════════
     fun observeIncomingMessages(dashboardViewModel: DashboardViewModel, peerId: String) {
         viewModelScope.launch {
@@ -119,27 +113,18 @@ class PatientDetailViewModel(application: Application) : AndroidViewModel(applic
                     _state.value = _state.value.copy(
                         medicalHistory = _state.value.medicalHistory + record
                     )
-                    Log.i(TAG, "[TIEMPO REAL] Registro P2P recibido en UI: id=${record.id}")
+                    Log.i(TAG, "[TIEMPO REAL] Registro P2P recibido: id=${record.id}")
                 }
             }
         }
     }
 
     // ══════════════════════════════════════════════════════════════
-    // AÑADIR NOTA CLÍNICA Y ENVIAR POR P2P
+    // addClinicalNote()
     //
-    // Flujo completo del botón "Guardar nota":
-    //   1. Crear MedicalRecord con los datos del formulario.
-    //   2. Si hay dashboardViewModel + destinationCircuitAddr:
-    //      → sendRecord() guarda en SQLite, encola en sync_log,
-    //        envía por P2P y espera ACK.
-    //   3. Si no hay destino P2P conocido:
-    //      → Solo guarda local (quedará PENDING para reintento futuro).
-    //   4. Actualización optimista de la UI: el registro aparece
-    //      inmediatamente sin esperar confirmación de red.
-    //
-    // destinationCircuitAddr formato Circuit Relay:
-    //   /ip4/<relay>/tcp/4001/p2p/<relayId>/p2p-circuit/p2p/<patientPeerId>
+    // Flujo del botón "Guardar nota":
+    //   CON P2P: sendRecord() guarda + encola + envía al paciente.
+    //   SIN P2P: guarda localmente con ownerPeerId del profesional.
     // ══════════════════════════════════════════════════════════════
     fun addClinicalNote(
         peerId: String,
@@ -160,7 +145,7 @@ class PatientDetailViewModel(application: Application) : AndroidViewModel(applic
                 )
 
                 if (dashboardViewModel != null && destinationCircuitAddr != null) {
-                    // ── CON P2P: sendRecord guarda + encola + envía ───
+                    // CON P2P: sendRecord guarda + encola + envía
                     dashboardViewModel.sendRecord(destinationCircuitAddr, record)
                     _state.value = _state.value.copy(
                         medicalHistory = _state.value.medicalHistory + record,
@@ -168,14 +153,14 @@ class PatientDetailViewModel(application: Application) : AndroidViewModel(applic
                     )
                     Log.i(TAG, "[P2P] Nota enviada a $peerId")
                 } else {
-                    // ── SOLO LOCAL: sin dirección P2P conocida ────────
+                    // SOLO LOCAL: guardar con ownerPeerId del profesional activo
                     dbHelper.guardarRegistroMedico(record, ownerPeerId)
                     val updatedHistory = dbHelper.obtenerHistorial(peerId, ownerPeerId)
                     _state.value = _state.value.copy(
                         medicalHistory = updatedHistory,
                         lastSendResult = SendResult.SavedOnly
                     )
-                    Log.d(TAG, "[LOCAL] Nota guardada localmente para $peerId")
+                    Log.d(TAG, "[LOCAL] Nota guardada para $peerId (owner=$ownerPeerId)")
                 }
 
             } catch (e: Exception) {
@@ -194,9 +179,9 @@ class PatientDetailViewModel(application: Application) : AndroidViewModel(applic
                     intervaloHoras = intervaloHoras
                 )
                 dbHelper.insertarPautaMedica(pauta)
-                Log.d(TAG, "Pauta anadida: med=$medicamentoId cada ${intervaloHoras}h")
                 val updated = dbHelper.obtenerMedicacionesActivas(peerId)
                 _state.value = _state.value.copy(activeMedications = updated)
+                Log.d(TAG, "Pauta añadida: med=$medicamentoId cada ${intervaloHoras}h")
             } catch (e: Exception) {
                 Log.e(TAG, "Error creando pauta: ${e.message}")
             }

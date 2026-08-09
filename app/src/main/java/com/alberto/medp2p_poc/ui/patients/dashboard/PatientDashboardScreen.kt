@@ -30,22 +30,25 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alberto.medp2p_poc.ui.dashboard.ConnectionStatus
 import com.alberto.medp2p_poc.ui.dashboard.DashboardViewModel
 import com.alberto.medp2p_poc.ui.qr.generateQrBitmap
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private object PatDashColors {
-    val PrimaryBlue = Color(0xFF005FB8)
+    val PrimaryBlue    = Color(0xFF005FB8)
     val PrimaryBlueDark = Color(0xFF003D7A)
-    val AccentMint = Color(0xFF00C9A7)
-    val AccentMintBg = Color(0xFFE6FAF5)
-    val SurfaceWhite = Color(0xFFF8FAFE)
-    val CardWhite = Color(0xFFFFFFFF)
-    val TextPrimary = Color(0xFF1A1C2B)
-    val TextSecondary = Color(0xFF6B7280)
-    val DividerLight = Color(0xFFE8EDF2)
-    val ErrorRed = Color(0xFFDC3545)
-    val WarningAmber = Color(0xFFF59E0B)
-    val Purple = Color(0xFF7C3AED)
-    val PurpleBg = Color(0xFFF3EEFE)
-    val BlueBg = Color(0xFFEBF3FE)
+    val AccentMint     = Color(0xFF00C9A7)
+    val AccentMintBg   = Color(0xFFE6FAF5)
+    val SurfaceWhite   = Color(0xFFF8FAFE)
+    val CardWhite      = Color(0xFFFFFFFF)
+    val TextPrimary    = Color(0xFF1A1C2B)
+    val TextSecondary  = Color(0xFF6B7280)
+    val DividerLight   = Color(0xFFE8EDF2)
+    val ErrorRed       = Color(0xFFDC3545)
+    val WarningAmber   = Color(0xFFF59E0B)
+    val Purple         = Color(0xFF7C3AED)
+    val PurpleBg       = Color(0xFFF3EEFE)
+    val BlueBg         = Color(0xFFEBF3FE)
 }
 
 @Composable
@@ -57,6 +60,16 @@ fun PatientDashboardScreen(
     val data by dashboardViewModel.dashboard.collectAsStateWithLifecycle()
     var showQrDialog by remember { mutableStateOf(false) }
 
+    // ── FIX: carga de médicos al nivel de la pantalla, no dentro de SectionCard.
+    // produceState debe estar en un @Composable directo, no en una lambda ColumnScope.
+    // Se recarga automáticamente cuando cambia ownerPeerId (cambio de sesión).
+    val medicos by produceState(
+        initialValue = emptyList<Triple<String, String, Long>>(),
+        key1         = data.ownerPeerId
+    ) {
+        value = dashboardViewModel.getMedicosVinculados()
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -64,9 +77,9 @@ fun PatientDashboardScreen(
             .verticalScroll(rememberScrollState())
     ) {
         PatientHeader(
-            displayName = data.displayName,
+            displayName      = data.displayName,
             connectionStatus = data.connectionStatus,
-            onRetry = { dashboardViewModel.retryConnection() }
+            onRetry          = { dashboardViewModel.retryConnection() }
         )
 
         Column(
@@ -76,14 +89,12 @@ fun PatientDashboardScreen(
                 .offset(y = (-20).dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // ══ BOTON GRANDE: COMPARTIR MI ID ══
+            // ══ BOTÓN GRANDE: COMPARTIR MI ID ══
             Button(
-                onClick = { showQrDialog = true },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = PatDashColors.PrimaryBlue),
+                onClick  = { showQrDialog = true },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape    = RoundedCornerShape(16.dp),
+                colors   = ButtonDefaults.buttonColors(containerColor = PatDashColors.PrimaryBlue),
                 elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
             ) {
                 Icon(Icons.Outlined.QrCode, null, Modifier.size(22.dp))
@@ -91,16 +102,16 @@ fun PatientDashboardScreen(
                 Text("Compartir mi ID con un Medico", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
 
-            // ══ SECCION 1: MI PERFIL ══
+            // ══ SECCIÓN 1: MI PERFIL ══
             SectionCard(Icons.Outlined.Person, "Mi Perfil", PatDashColors.BlueBg, PatDashColors.PrimaryBlue) {
                 ProfileRow("Nombre", data.displayName.ifBlank { "Sin nombre" }, Icons.Outlined.Person)
                 Spacer(Modifier.height(12.dp))
                 ProfileRow("Alergias", "Sin alergias registradas", Icons.Outlined.Warning)
                 Spacer(Modifier.height(16.dp))
                 OutlinedButton(
-                    onClick = onNavigateToProfile,
+                    onClick  = onNavigateToProfile,
                     modifier = Modifier.fillMaxWidth().height(48.dp),
-                    shape = RoundedCornerShape(14.dp)
+                    shape    = RoundedCornerShape(14.dp)
                 ) {
                     Icon(Icons.Filled.Edit, null, Modifier.size(18.dp), tint = PatDashColors.PrimaryBlue)
                     Spacer(Modifier.width(8.dp))
@@ -108,12 +119,44 @@ fun PatientDashboardScreen(
                 }
             }
 
-            // ══ SECCION 2: MIS MEDICOS ══
+            // ══ SECCIÓN 2: MIS MÉDICOS ══
+            // medicos se carga arriba con produceState al nivel de PatientDashboardScreen.
+            // Aquí solo consumimos el valor ya calculado — sin llamadas suspending.
             SectionCard(Icons.Outlined.MedicalServices, "Mis Medicos", PatDashColors.AccentMintBg, PatDashColors.AccentMint) {
-                EmptyStateBox(Icons.Outlined.MedicalServices, "Aun no tienes medicos vinculados", "Tu medico te vinculara escaneando tu codigo QR")
+                if (medicos.isEmpty()) {
+                    EmptyStateBox(
+                        Icons.Outlined.MedicalServices,
+                        "Aun no tienes medicos vinculados",
+                        "Tu medico te vinculara escaneando tu codigo QR"
+                    )
+                } else {
+                    medicos.forEach { (_, doctorName, linkedAt) ->
+                        Row(
+                            modifier          = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier         = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(PatDashColors.AccentMintBg),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Outlined.MedicalServices, null, Modifier.size(20.dp), tint = PatDashColors.AccentMint)
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(doctorName, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = PatDashColors.TextPrimary)
+                                Text(
+                                    "Vinculado el ${SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(linkedAt))}",
+                                    fontSize = 12.sp,
+                                    color    = PatDashColors.TextSecondary
+                                )
+                            }
+                        }
+                        HorizontalDivider(color = PatDashColors.DividerLight, thickness = 0.5.dp, modifier = Modifier.padding(vertical = 2.dp))
+                    }
+                }
             }
 
-            // ══ SECCION 3: MI MEDICACION ══
+            // ══ SECCIÓN 3: MI MEDICACIÓN ══
             SectionCard(Icons.Outlined.Medication, "Mi Medicacion", PatDashColors.PurpleBg, PatDashColors.Purple) {
                 EmptyStateBox(Icons.Outlined.Medication, "Sin medicacion asignada", "Cuando tu medico te asigne una pauta, aparecera aqui")
             }
@@ -122,10 +165,10 @@ fun PatientDashboardScreen(
         }
     }
 
-    // ══ DIALOGO QR ══
+    // ══ DIÁLOGO QR ══
     if (showQrDialog) {
         SharePatientQrDialog(
-            peerId = dashboardViewModel.activeHost?.peerId?.toString() ?: "sin-nodo",
+            peerId    = dashboardViewModel.activeHost?.peerId?.toString() ?: "sin-nodo",
             onDismiss = { showQrDialog = false }
         )
     }
@@ -165,21 +208,21 @@ private fun SharePatientQrDialog(peerId: String, onDismiss: () -> Unit) {
     )
 }
 
-// ── Componentes reutilizables (igual que antes) ──
-
 @Composable
 private fun PatientHeader(displayName: String, connectionStatus: ConnectionStatus, onRetry: () -> Unit) {
     Box(
-        Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(PatDashColors.PrimaryBlue, PatDashColors.PrimaryBlueDark))).padding(24.dp).padding(bottom = 40.dp)
+        Modifier.fillMaxWidth()
+            .background(Brush.verticalGradient(listOf(PatDashColors.PrimaryBlue, PatDashColors.PrimaryBlueDark)))
+            .padding(24.dp).padding(bottom = 40.dp)
     ) {
         Column {
             Text(saludoSegunHora(), fontSize = 16.sp, color = Color.White.copy(alpha = 0.8f))
             Text(displayName.ifBlank { "Paciente" }, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(12.dp))
             val (statusText, statusColor) = when (connectionStatus) {
-                is ConnectionStatus.Connected -> "Conectado con tu equipo medico" to PatDashColors.AccentMint
-                is ConnectionStatus.Connecting -> "Conectando..." to PatDashColors.WarningAmber
-                is ConnectionStatus.Error -> "Sin conexion. Tus datos estan seguros." to PatDashColors.ErrorRed
+                is ConnectionStatus.Connected    -> "Conectado con tu equipo medico" to PatDashColors.AccentMint
+                is ConnectionStatus.Connecting   -> "Conectando..." to PatDashColors.WarningAmber
+                is ConnectionStatus.Error        -> "Sin conexion. Tus datos estan seguros." to PatDashColors.ErrorRed
                 is ConnectionStatus.Disconnected -> "Sin conexion" to PatDashColors.WarningAmber
             }
             Row(verticalAlignment = Alignment.CenterVertically) {

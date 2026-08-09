@@ -59,11 +59,6 @@ fun ClinicalAppNavigation(
 ) {
     val navController = rememberNavController()
 
-    // ── FIX: nombre reactivo desde el ViewModel ───────────────────
-    // userName viene del momento del login y queda congelado.
-    // dashboardData.displayName se actualiza en tiempo real cuando
-    // el usuario guarda cambios en ProfileScreen, por lo que el
-    // avatar del TopAppBar refleja el nombre actual sin reiniciar.
     val dashboardData by dashboardViewModel.dashboard.collectAsStateWithLifecycle()
     val currentName   = dashboardData.displayName.ifBlank { userName }
 
@@ -78,7 +73,7 @@ fun ClinicalAppNavigation(
             TopAppBar(
                 title = {
                     Text(
-                        "Hola, $currentName",   // ← usa currentName reactivo
+                        "Hola, $currentName",
                         style = MaterialTheme.typography.titleMedium,
                         color = NavColors.PrimaryBlue
                     )
@@ -122,9 +117,6 @@ fun ClinicalAppNavigation(
             startDestination = if (userRole == UserRole.PROFESSIONAL) "home" else "patient_home",
             modifier         = Modifier.padding(innerPadding)
         ) {
-            // ══════════════════════════════════════════
-            // ══ RUTAS PROFESIONAL ════════════════════
-            // ══════════════════════════════════════════
             composable("home") {
                 LaunchedEffect(Unit) { dashboardViewModel.refreshCounters() }
                 PantallaDashboardClinico(
@@ -155,7 +147,12 @@ fun ClinicalAppNavigation(
                 val peerId          = backStackEntry.arguments?.getString("peerId") ?: ""
                 val detailViewModel: PatientDetailViewModel = viewModel()
 
+                // ── FIX: pasar ownerPeerId a loadPatientDetail ──────────
+                // Sin ownerPeerId las queries devuelven null porque la DB
+                // v4 filtra por ownerPeerId en todas las consultas clínicas.
                 LaunchedEffect(peerId) {
+                    val ownerPeerId = dashboardViewModel.currentOwnerPeerId
+                    detailViewModel.loadPatientDetail(peerId, ownerPeerId)
                     detailViewModel.observeIncomingMessages(dashboardViewModel, peerId)
                 }
 
@@ -167,9 +164,6 @@ fun ClinicalAppNavigation(
                 )
             }
 
-            // ══════════════════════════════════════════
-            // ══ RUTA PACIENTE ════════════════════════
-            // ══════════════════════════════════════════
             composable("patient_home") {
                 PatientDashboardScreen(
                     dashboardViewModel  = dashboardViewModel,
@@ -180,9 +174,6 @@ fun ClinicalAppNavigation(
                 )
             }
 
-            // ══════════════════════════════════════════
-            // ══ PERFIL (AMBOS ROLES) ═════════════════
-            // ══════════════════════════════════════════
             composable("profile_edit") {
                 ProfileScreen(
                     dashboardViewModel = dashboardViewModel,

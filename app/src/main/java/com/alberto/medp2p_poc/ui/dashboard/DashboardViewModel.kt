@@ -39,8 +39,6 @@ data class DashboardData(
     val displayName: String = "",
     val photoUri: String = "",
     val role: UserRole = UserRole.PROFESSIONAL,
-    // ownerPeerId: el peerId del usuario activo.
-    // Todas las queries a DB lo usan como filtro (Row-Level Security).
     val ownerPeerId: String = ""
 )
 
@@ -59,7 +57,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val incomingMessages: SharedFlow<MedicalRecord>?
         get() = if (::messagingService.isInitialized) messagingService.incomingMessages else null
 
-    // ownerPeerId del usuario activo — acceso directo para los ViewModels hijos
     val currentOwnerPeerId: String get() = _dashboard.value.ownerPeerId
 
     companion object {
@@ -71,13 +68,11 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     fun initialize(session: UserSession, privateKey: PrivKey? = null) {
         storedPrivateKey = privateKey
         _dashboard.value = _dashboard.value.copy(
-            displayName  = session.displayName,
-            role         = session.role,
-            photoUri     = session.photoUri,
-            ownerPeerId  = session.peerId,
-            // FIX FALLO 1: mostrar lastLoginAt inmediatamente al entrar,
-            // sin esperar a que el nodo P2P conecte al relay.
-            lastLoginAt  = session.lastLoginAt
+            displayName = session.displayName,
+            role        = session.role,
+            photoUri    = session.photoUri,
+            ownerPeerId = session.peerId,
+            lastLoginAt = session.lastLoginAt
         )
         messagingService = P2PMessagingService(getApplication(), dbHelper)
         loadDashboardCounters()
@@ -115,8 +110,10 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 val privKey = storedPrivateKey ?: generateKeyPair(KeyType.ED25519).first
                 activeHost?.stop()
                 activeHost = null
-                val node = messagingService.start(privKey)
+                // FIX: pasar ownerPeerId también en el reintento
+                val node = messagingService.start(privKey, _dashboard.value.ownerPeerId)
                 activeHost = node
+                Log.i(TAG, "✅ Reconexión exitosa.")
                 _dashboard.value = _dashboard.value.copy(
                     connectionStatus  = ConnectionStatus.Connected,
                     lastSyncTimestamp = System.currentTimeMillis()
@@ -138,9 +135,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         messagingService.sendMedicalRecord(node, destinationCircuitAddr, record)
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // loadDashboardCounters() — filtra por ownerPeerId (FIX FALLO 5)
-    // ══════════════════════════════════════════════════════════════
     private fun loadDashboardCounters() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -155,20 +149,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun refreshCounters() { loadDashboardCounters() }
 
-    // ══════════════════════════════════════════════════════════════
-    // linkPatient() — FIX FALLO 5 + FIX FALLO 3
-    //
-    // FIX FALLO 5: pasa ownerPeerId al INSERT para Row-Level Security.
-    // FIX FALLO 3: tras el INSERT local, envía mensaje P2P LINK_DOCTOR
-    //   al paciente para que aparezca en su sección "Mis Médicos".
-    // ══════════════════════════════════════════════════════════════
-    fun linkPatient(
-        fullName: String,
-        peerId: String,
-        allergies: String = ""
-    ) {
+    fun linkPatient(fullName: String, peerId: String, allergies: String = "") {
         viewModelScope.launch(Dispatchers.IO) {
-            val owner = _dashboard.value.ownerPeerId
+            val owner  = _dashboard.value.ownerPeerId
             val myName = _dashboard.value.displayName
             try {
                 val colorIndex = (fullName.hashCode() and 0x7FFFFFFF) % 8
@@ -179,38 +162,24 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     avatarColorIndex = colorIndex,
                     lastSyncAt       = System.currentTimeMillis()
                 )
-                // INSERT con ownerPeerId del médico activo
                 dbHelper.insertarPacienteClinico(patient, owner)
                 Log.d(TAG, "✅ Paciente vinculado: ${patient.fullName}")
                 loadDashboardCounters()
 
-                // ── FIX FALLO 3: Envío P2P bidireccional LINK_DOCTOR ──
-                // El médico notifica al paciente para que guarde al médico
-                // en su tabla medico_vinculado. Si el paciente no está
-                // online, quedará en sync_log como PENDING para reintento.
                 val node = activeHost ?: return@launch
                 val destAddr = "$RELAY_BASE/p2p-circuit/p2p/${peerId.trim()}"
                 messagingService.sendLinkDoctorMessage(
-                    host                  = node,
+                    host                   = node,
                     destinationCircuitAddr = destAddr,
-                    doctorPeerId          = owner,
-                    doctorName            = myName
+                    doctorPeerId           = owner,
+                    doctorName             = myName
                 )
-
             } catch (e: Exception) {
                 Log.e(TAG, "Error vinculando paciente: ${e.message}")
             }
         }
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // updateProfile() — FIX FALLO 2
-    //
-    // Guarda nombre + foto en DB y actualiza el estado reactivo.
-    // La foto se copia al directorio privado de la app antes de
-    // guardar la ruta, evitando el problema de URIs efímeras de
-    // PickVisualMedia que caducan al reiniciar la app.
-    // ══════════════════════════════════════════════════════════════
     fun updateProfile(newName: String, newPhotoUri: String) {
         if (newName.isBlank()) return
         val owner = _dashboard.value.ownerPeerId
@@ -228,7 +197,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    // Copia la imagen seleccionada al directorio privado y devuelve la ruta
     fun copyPhotoToPrivateDir(context: Context, sourceUriString: String): String {
         return try {
             val sourceUri = android.net.Uri.parse(sourceUriString)
@@ -240,6 +208,22 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         } catch (e: Exception) {
             Log.e(TAG, "Error copiando foto: ${e.message}")
             ""
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // getMedicosVinculados() — para PatientDashboardScreen
+    //
+    // Devuelve la lista de médicos que han vinculado al paciente
+    // activo mediante el mensaje P2P LINK_DOCTOR. Filtrado por
+    // ownerPeerId del paciente actualmente logueado.
+    // ══════════════════════════════════════════════════════════════
+    fun getMedicosVinculados(): List<Triple<String, String, Long>> {
+        return try {
+            dbHelper.obtenerMedicosVinculados(_dashboard.value.ownerPeerId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cargando médicos vinculados: ${e.message}")
+            emptyList()
         }
     }
 

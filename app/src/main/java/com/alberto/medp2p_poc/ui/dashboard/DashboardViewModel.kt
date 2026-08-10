@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 sealed class ConnectionStatus {
@@ -75,6 +76,19 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             lastLoginAt = session.lastLoginAt
         )
         messagingService = P2PMessagingService(getApplication(), dbHelper)
+
+        // ── FIX FALLO 3: colectar syncEvents del servicio ─────────────
+        // Cada vez que el servicio emite un timestamp de sincronización
+        // (al recibir o enviar un mensaje con éxito), actualizamos
+        // lastSyncTimestamp en DashboardData para que la SyncStatusCard
+        // muestre la hora real de la última actividad P2P.
+        viewModelScope.launch {
+            messagingService.syncEvents.collect { timestamp ->
+                _dashboard.value = _dashboard.value.copy(lastSyncTimestamp = timestamp)
+                Log.d(TAG, "[SYNC] Última sincronización actualizada: $timestamp")
+            }
+        }
+
         loadDashboardCounters()
         startP2PNode(privateKey)
     }
@@ -110,7 +124,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 val privKey = storedPrivateKey ?: generateKeyPair(KeyType.ED25519).first
                 activeHost?.stop()
                 activeHost = null
-                // FIX: pasar ownerPeerId también en el reintento
                 val node = messagingService.start(privKey, _dashboard.value.ownerPeerId)
                 activeHost = node
                 Log.i(TAG, "✅ Reconexión exitosa.")
@@ -211,21 +224,18 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // getMedicosVinculados() — para PatientDashboardScreen
-    //
-    // Devuelve la lista de médicos que han vinculado al paciente
-    // activo mediante el mensaje P2P LINK_DOCTOR. Filtrado por
-    // ownerPeerId del paciente actualmente logueado.
-    // ══════════════════════════════════════════════════════════════
-    fun getMedicosVinculados(): List<Triple<String, String, Long>> {
-        return try {
-            dbHelper.obtenerMedicosVinculados(_dashboard.value.ownerPeerId)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error cargando médicos vinculados: ${e.message}")
-            emptyList()
+    // ── FIX FALLO 2: getMedicosVinculados en IO para evitar bloqueo ──
+    // Antes era síncrono — llamado desde produceState en Compose podía
+    // correr en el hilo incorrecto. Ahora es suspend + Dispatchers.IO.
+    suspend fun getMedicosVinculados(): List<Triple<String, String, Long>> =
+        withContext(Dispatchers.IO) {
+            try {
+                dbHelper.obtenerMedicosVinculados(_dashboard.value.ownerPeerId)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error cargando médicos vinculados: ${e.message}")
+                emptyList()
+            }
         }
-    }
 
     override fun onCleared() {
         super.onCleared()

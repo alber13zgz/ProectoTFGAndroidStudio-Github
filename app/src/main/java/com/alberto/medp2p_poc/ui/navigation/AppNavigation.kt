@@ -1,5 +1,7 @@
 package com.alberto.medp2p_poc.ui.navigation
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -14,7 +16,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -63,10 +67,19 @@ fun ClinicalAppNavigation(
     val currentName   = dashboardData.displayName.ifBlank { userName }
 
     val initials = currentName
-        .split(" ")
-        .take(2)
+        .split(" ").take(2)
         .mapNotNull { it.firstOrNull()?.uppercase() }
         .joinToString("")
+
+    // ── FIX FALLO 1: cargar Bitmap de la foto de perfil reactivamente ──
+    // dashboardData.photoUri es la ruta absoluta en filesDir, estable
+    // entre sesiones. Se recarga con remember(photoUri) cada vez que
+    // el usuario guarda una nueva foto en ProfileScreen.
+    val profileBitmap = remember(dashboardData.photoUri) {
+        if (dashboardData.photoUri.isNotBlank()) {
+            try { BitmapFactory.decodeFile(dashboardData.photoUri) } catch (e: Exception) { null }
+        } else null
+    }
 
     Scaffold(
         topBar = {
@@ -79,6 +92,7 @@ fun ClinicalAppNavigation(
                     )
                 },
                 navigationIcon = {
+                    // ── Avatar reactivo: foto si existe, iniciales si no ──
                     Box(
                         modifier = Modifier
                             .padding(start = 12.dp)
@@ -90,12 +104,23 @@ fun ClinicalAppNavigation(
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text       = initials.ifBlank { "?" },
-                            fontSize   = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color      = Color.White
-                        )
+                        if (profileBitmap != null) {
+                            // Foto de perfil guardada — mostrar imagen
+                            Image(
+                                bitmap             = profileBitmap.asImageBitmap(),
+                                contentDescription = "Foto de perfil",
+                                modifier           = Modifier.fillMaxSize(),
+                                contentScale       = ContentScale.Crop
+                            )
+                        } else {
+                            // Sin foto — mostrar iniciales
+                            Text(
+                                text       = initials.ifBlank { "?" },
+                                fontSize   = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color      = Color.White
+                            )
+                        }
                     }
                 },
                 actions = {
@@ -132,13 +157,9 @@ fun ClinicalAppNavigation(
 
             composable("patients") {
                 val patientsViewModel: PatientsViewModel = viewModel()
-
-                // Inicializar con el ownerPeerId del usuario activo.
-                // LaunchedEffect garantiza que se llama una sola vez por composición.
                 LaunchedEffect(Unit) {
                     patientsViewModel.init(dashboardViewModel.currentOwnerPeerId)
                 }
-
                 PantallaPacientes(
                     viewModel              = patientsViewModel,
                     onPacienteSeleccionado = { peerId ->
@@ -154,9 +175,6 @@ fun ClinicalAppNavigation(
                 val peerId          = backStackEntry.arguments?.getString("peerId") ?: ""
                 val detailViewModel: PatientDetailViewModel = viewModel()
 
-                // ── FIX: pasar ownerPeerId a loadPatientDetail ──────────
-                // Sin ownerPeerId las queries devuelven null porque la DB
-                // v4 filtra por ownerPeerId en todas las consultas clínicas.
                 LaunchedEffect(peerId) {
                     val ownerPeerId = dashboardViewModel.currentOwnerPeerId
                     detailViewModel.loadPatientDetail(peerId, ownerPeerId)

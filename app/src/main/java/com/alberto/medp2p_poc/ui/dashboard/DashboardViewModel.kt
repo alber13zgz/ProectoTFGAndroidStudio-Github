@@ -48,6 +48,10 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private val _dashboard = MutableStateFlow(DashboardData())
     val dashboard: StateFlow<DashboardData> = _dashboard.asStateFlow()
 
+    // ── FIX UI REACTIVA: StateFlow para mantener la lista de médicos en vivo ──
+    private val _medicosVinculados = MutableStateFlow<List<Triple<String, String, Long>>>(emptyList())
+    val medicosVinculados: StateFlow<List<Triple<String, String, Long>>> = _medicosVinculados.asStateFlow()
+
     var activeHost: Host? = null
         private set
 
@@ -86,11 +90,22 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             messagingService.syncEvents.collect { timestamp ->
                 _dashboard.value = _dashboard.value.copy(lastSyncTimestamp = timestamp)
                 Log.d(TAG, "[SYNC] Última sincronización actualizada: $timestamp")
+
+                // ── FIX UI REACTIVA: Recargamos los médicos al haber actividad P2P ──
+                loadMedicosVinculados()
             }
         }
 
         loadDashboardCounters()
+        loadMedicosVinculados() // ── FIX UI REACTIVA: Carga inicial de médicos
         startP2PNode(privateKey)
+    }
+
+    // ── FIX UI REACTIVA: Función privada que vuelca la BD en el Flow ──
+    private fun loadMedicosVinculados() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _medicosVinculados.value = getMedicosVinculados()
+        }
     }
 
     private fun startP2PNode(privateKey: PrivKey?) {
@@ -251,4 +266,5 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         storedPrivateKey = null
         _dashboard.value = DashboardData()
     }
+
 }

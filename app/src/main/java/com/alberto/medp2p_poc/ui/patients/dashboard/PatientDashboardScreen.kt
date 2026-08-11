@@ -60,15 +60,8 @@ fun PatientDashboardScreen(
     val data by dashboardViewModel.dashboard.collectAsStateWithLifecycle()
     var showQrDialog by remember { mutableStateOf(false) }
 
-    // ── FIX: carga de médicos al nivel de la pantalla, no dentro de SectionCard.
-    // produceState debe estar en un @Composable directo, no en una lambda ColumnScope.
-    // Se recarga automáticamente cuando cambia ownerPeerId (cambio de sesión).
-    val medicos by produceState(
-        initialValue = emptyList<Triple<String, String, Long>>(),
-        key1         = data.ownerPeerId
-    ) {
-        value = dashboardViewModel.getMedicosVinculados()
-    }
+
+    val medicos by dashboardViewModel.medicosVinculados.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier

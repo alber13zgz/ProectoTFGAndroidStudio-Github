@@ -242,13 +242,13 @@ private fun RegistrationCard(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Crear Cuenta Medica Segura",
+                text = "Crear Cuenta",
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = ClinicalColors.TextPrimary
             )
             Text(
-                text = "Tus datos nunca salen de este dispositivo",
+                text = "",
                 fontSize = 13.sp,
                 color = ClinicalColors.TextSecondary,
                 textAlign = TextAlign.Center,
@@ -368,7 +368,7 @@ private fun RegistrationCard(
             ) {
                 Icon(Icons.Outlined.Shield, null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(10.dp))
-                Text("Crear Cuenta Medica Segura", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text("Crear Cuenta", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
         }
     }
@@ -436,7 +436,7 @@ private fun LoginCard(
                 color = ClinicalColors.TextPrimary
             )
             Text(
-                text = "Introduce tu llave de seguridad para continuar",
+                text = "Introduce tu contraseña para continuar",
                 fontSize = 13.sp,
                 color = ClinicalColors.TextSecondary,
                 textAlign = TextAlign.Center,
@@ -446,7 +446,7 @@ private fun LoginCard(
             OutlinedTextField(
                 value = password,
                 onValueChange = { password = it },
-                label = { Text("Llave de seguridad") },
+                label = { Text("Contraseña") },
                 leadingIcon = {
                     Icon(Icons.Filled.Lock, null, tint = ClinicalColors.PrimaryBlue)
                 },
@@ -497,7 +497,7 @@ private fun LoginCard(
             ) {
                 Icon(Icons.Outlined.Lock, null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(10.dp))
-                Text("Acceso con Llave de Seguridad", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text("Acceso con Contraseña", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
 
             // ── Texto de confianza ──

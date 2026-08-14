@@ -5,40 +5,26 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.util.Log
 
-// ══════════════════════════════════════════════════════════════════════
-// VERSIÓN 4 — Cambios estructurales:
+// ════════════════════════════════════════════════════════════════
+// VERSIÓN 5 — Cambios respecto a v4:
 //
-//   1. Columna ownerPeerId en paciente_clinico, historial_clinico,
-//      sync_log y medico_vinculado.
-//      JUSTIFICACIÓN: Row-Level Security a nivel de aplicación.
-//      La BD es única en el dispositivo. Sin ownerPeerId, cualquier
-//      usuario que inicie sesión en el mismo dispositivo ve los datos
-//      de todos los usuarios anteriores — fallo crítico de privacidad
-//      en una app médica. Con ownerPeerId, cada query filtra por el
-//      usuario activo. Los datos NUNCA se borran en logout; simplemente
-//      dejan de ser visibles al cambiar de usuario.
+//   5. Tablas pauta_medica_v2 y registro_suministro.
+//      JUSTIFICACIÓN: gestión de pautas médicas distribuidas (Fase 1).
+//      pauta_medica_v2 almacena pautas con fechaInicio/fechaFin y
+//      frecuenciaDiaria. registro_suministro registra cada administración.
+//      La query obtenerAlertasPendientesHoy() cruza ambas tablas con
+//      paciente_clinico para mostrar solo alertas pendientes del día.
 //
-//   2. Nueva tabla medico_vinculado para el flujo bidireccional P2P.
-//      JUSTIFICACIÓN: cuando el Médico vincula al Paciente escaneando
-//      su QR, envía un mensaje P2P tipo LINK_DOCTOR. El dispositivo
-//      del Paciente recibe ese mensaje y guarda al Médico aquí.
-//      PatientDashboardScreen.Mis Médicos lee de esta tabla.
-//
-//   3. Columna lastLoginAt en auth_profile.
-//      JUSTIFICACIÓN: desacoplar "sesión activa" de "conexión P2P".
-//      lastLoginAt se escribe en cada login exitoso, mostrando al
-//      usuario feedback inmediato sin depender de la latencia del relay.
-//
-//   4. Columna photoUri en auth_profile.
-//      JUSTIFICACIÓN: persistir la ruta local de la foto de perfil
-//      entre sesiones.
-// ══════════════════════════════════════════════════════════════════════
+//   También se añade actualizarAlergiasPaciente() que actualiza solo
+//   la columna allergies sin tocar notes — necesario para el perfil
+//   del paciente en ProfileScreen.
+// ════════════════════════════════════════════════════════════════
 
 class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
 
     companion object {
         const val DATABASE_NAME = "medp2p_offline.db"
-        const val DATABASE_VERSION = 4
+        const val DATABASE_VERSION = 5
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -139,8 +125,6 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         db.execSQL("CREATE INDEX idx_historial_owner ON historial_clinico(ownerPeerId)")
 
         // --- MÓDULO 5: AUTENTICACIÓN LOCAL ---
-        // photoUri: ruta al archivo de foto en filesDir (vacío si no hay foto)
-        // lastLoginAt: timestamp del último login exitoso (independiente del P2P)
         db.execSQL("""
             CREATE TABLE auth_profile (
                 peerId TEXT PRIMARY KEY,
@@ -170,15 +154,11 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             )
         """.trimIndent())
 
-        // NOTA: UNIQUE(peerId) se elimina. Ahora el UNIQUE es (ownerPeerId, peerId)
-        // para permitir que dos médicos distintos tengan al mismo paciente.
         db.execSQL("CREATE UNIQUE INDEX idx_paciente_owner_peer ON paciente_clinico(ownerPeerId, peerId)")
         db.execSQL("CREATE INDEX idx_paciente_clinico_nombre ON paciente_clinico(ownerPeerId, fullName)")
         db.execSQL("CREATE INDEX idx_paciente_clinico_fav ON paciente_clinico(ownerPeerId, isFavorite)")
 
-        // --- MÓDULO 7: MÉDICOS VINCULADOS (NUEVO v4) ---
-        // Tabla en el dispositivo del PACIENTE que guarda los médicos
-        // que le han vinculado vía mensaje P2P tipo LINK_DOCTOR.
+        // --- MÓDULO 7: MÉDICOS VINCULADOS (v4) ---
         db.execSQL("""
             CREATE TABLE medico_vinculado (
                 id TEXT PRIMARY KEY,
@@ -192,12 +172,45 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         db.execSQL("CREATE UNIQUE INDEX idx_medico_owner_peer ON medico_vinculado(ownerPeerId, doctorPeerId)")
         db.execSQL("CREATE INDEX idx_medico_owner ON medico_vinculado(ownerPeerId)")
 
+        // --- MÓDULO 8: PAUTAS MÉDICAS v2 (v5) ---
+        // pauta_medica_v2: pautas con fechaInicio/fechaFin y frecuenciaDiaria.
+        // Distinta de pauta_medica (legacy) que usa intervaloHoras + medicamentoId.
+        db.execSQL("""
+            CREATE TABLE pauta_medica_v2 (
+                id TEXT PRIMARY KEY,
+                patientPeerId TEXT NOT NULL,
+                doctorCreatorPeerId TEXT NOT NULL,
+                medicacion TEXT NOT NULL,
+                dosis TEXT NOT NULL,
+                frecuenciaDiaria INTEGER NOT NULL,
+                fechaInicio INTEGER NOT NULL,
+                fechaFin INTEGER NOT NULL
+            )
+        """.trimIndent())
+
+        db.execSQL("CREATE INDEX idx_pauta_v2_patient ON pauta_medica_v2(patientPeerId)")
+        db.execSQL("CREATE INDEX idx_pauta_v2_doctor ON pauta_medica_v2(doctorCreatorPeerId)")
+
+        db.execSQL("""
+            CREATE TABLE registro_suministro (
+                id TEXT PRIMARY KEY,
+                pautaId TEXT NOT NULL,
+                patientPeerId TEXT NOT NULL,
+                doctorAdministeredPeerId TEXT NOT NULL,
+                timestampSuministro INTEGER NOT NULL,
+                FOREIGN KEY(pautaId) REFERENCES pauta_medica_v2(id) ON DELETE CASCADE
+            )
+        """.trimIndent())
+
+        db.execSQL("CREATE INDEX idx_suministro_pauta ON registro_suministro(pautaId)")
+
         Log.i("P2P_TFG", "[DB] Todas las tablas creadas (v$DATABASE_VERSION).")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         Log.i("P2P_TFG", "[DB] Upgrade $oldVersion -> $newVersion. Recreando tablas...")
         listOf(
+            "registro_suministro", "pauta_medica_v2",
             "medico_vinculado", "paciente_clinico", "auth_profile",
             "historial_clinico", "sync_log", "toma_diaria",
             "pauta_medica", "medicamento", "cuidador", "paciente", "usuario"
@@ -450,6 +463,17 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         } finally { db.close() }
     }
 
+    // Actualiza solo allergies sin tocar notes — usado desde ProfileScreen del paciente
+    fun actualizarAlergiasPaciente(peerId: String, ownerPeerId: String, allergies: String) {
+        val db = this.writableDatabase
+        try {
+            db.execSQL(
+                "UPDATE paciente_clinico SET allergies = ? WHERE peerId = ? AND ownerPeerId = ?",
+                arrayOf(allergies, peerId, ownerPeerId)
+            )
+        } finally { db.close() }
+    }
+
     // ══════════════════════════════════════════════════════════════
     // ══ MÉDICOS VINCULADOS (medico_vinculado) ════════════════════
     // ══════════════════════════════════════════════════════════════
@@ -498,7 +522,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     // ══════════════════════════════════════════════════════════════
-    // ══ MEDICACIONES Y PAUTAS ════════════════════════════════════
+    // ══ MEDICACIONES Y PAUTAS (legacy) ══════════════════════════
     // ══════════════════════════════════════════════════════════════
 
     fun insertarMedicamento(med: com.alberto.medp2p_poc.data.model.Medicamento) {
@@ -566,8 +590,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                         intervaloHoras = cursor.getInt(6)
                     )
                     lista.add(com.alberto.medp2p_poc.ui.patients.detail.ActiveMedication(
-                        medication   = med,
-                        prescription = pauta,
+                        medication    = med,
+                        prescription  = pauta,
                         nextDoseLabel = "Cada ${pauta.intervaloHoras}h"
                     ))
                 } while (cursor.moveToNext())
@@ -617,14 +641,109 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     // ══════════════════════════════════════════════════════════════
+    // ══ PAUTAS MÉDICAS v2 (MÓDULO 8 — v5) ══════════════════════
+    // ══════════════════════════════════════════════════════════════
+
+    fun insertarPautaMedicaV2(pauta: com.alberto.medp2p_poc.data.model.PautaMedicaV2) {
+        val db = this.writableDatabase
+        try {
+            db.execSQL(
+                """INSERT OR REPLACE INTO pauta_medica_v2
+                   (id, patientPeerId, doctorCreatorPeerId, medicacion, dosis, frecuenciaDiaria, fechaInicio, fechaFin)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                arrayOf(
+                    pauta.id, pauta.patientPeerId, pauta.doctorCreatorPeerId,
+                    pauta.medicacion, pauta.dosis, pauta.frecuenciaDiaria,
+                    pauta.fechaInicio, pauta.fechaFin
+                )
+            )
+            Log.i("P2P_TFG", "[DB] PautaMedicaV2 insertada: ${pauta.medicacion} → ${pauta.patientPeerId.take(12)}")
+        } finally { db.close() }
+    }
+
+    fun insertarRegistroSuministro(registro: com.alberto.medp2p_poc.data.model.RegistroSuministro) {
+        val db = this.writableDatabase
+        try {
+            db.execSQL(
+                """INSERT INTO registro_suministro
+                   (id, pautaId, patientPeerId, doctorAdministeredPeerId, timestampSuministro)
+                   VALUES (?, ?, ?, ?, ?)""",
+                arrayOf(
+                    registro.id, registro.pautaId, registro.patientPeerId,
+                    registro.doctorAdministeredPeerId, registro.timestampSuministro
+                )
+            )
+            Log.i("P2P_TFG", "[DB] Suministro registrado: pauta=${registro.pautaId.take(8)}")
+        } finally { db.close() }
+    }
+
+    // QUERY COMPLEJA: pautas activas HOY de pacientes del doctor,
+    // excluyendo las que ya tienen suministro registrado hoy.
+    fun obtenerAlertasPendientesHoy(doctorPeerId: String): List<com.alberto.medp2p_poc.data.model.PautaMedicaV2> {
+        val lista = mutableListOf<com.alberto.medp2p_poc.data.model.PautaMedicaV2>()
+        val db = this.readableDatabase
+
+        val cal = java.util.Calendar.getInstance()
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        val inicioDia = cal.timeInMillis
+        val finDia    = inicioDia + 86_400_000L
+
+        val cursor = db.rawQuery("""
+            SELECT p.id, p.patientPeerId, p.doctorCreatorPeerId,
+                   p.medicacion, p.dosis, p.frecuenciaDiaria, p.fechaInicio, p.fechaFin
+            FROM pauta_medica_v2 p
+            INNER JOIN paciente_clinico pc
+                ON pc.peerId = p.patientPeerId
+                AND pc.ownerPeerId = ?
+            WHERE p.fechaInicio <= ?
+              AND p.fechaFin    >= ?
+              AND p.id NOT IN (
+                  SELECT DISTINCT rs.pautaId
+                  FROM registro_suministro rs
+                  WHERE rs.pautaId = p.id
+                    AND rs.timestampSuministro >= ?
+                    AND rs.timestampSuministro <  ?
+              )
+            ORDER BY p.medicacion ASC
+        """.trimIndent(),
+            arrayOf(doctorPeerId, inicioDia.toString(), inicioDia.toString(), inicioDia.toString(), finDia.toString())
+        )
+        try {
+            if (cursor.moveToFirst()) {
+                do {
+                    lista.add(com.alberto.medp2p_poc.data.model.PautaMedicaV2(
+                        id                  = cursor.getString(0),
+                        patientPeerId       = cursor.getString(1),
+                        doctorCreatorPeerId = cursor.getString(2),
+                        medicacion          = cursor.getString(3),
+                        dosis               = cursor.getString(4),
+                        frecuenciaDiaria    = cursor.getInt(5),
+                        fechaInicio         = cursor.getLong(6),
+                        fechaFin            = cursor.getLong(7)
+                    ))
+                } while (cursor.moveToNext())
+            }
+        } finally {
+            cursor.close()
+            db.close()
+        }
+        return lista
+    }
+
+    // ══════════════════════════════════════════════════════════════
     // ══ LEGACY ══════════════════════════════════════════════════
     // ══════════════════════════════════════════════════════════════
 
     fun registrarMiPerfilLocal(peerId: String, nombre: String, esCuidador: Boolean) {
         val db = this.writableDatabase
         try {
-            db.execSQL("INSERT INTO usuario (peerId, nombre, fechaRegistro) VALUES (?, ?, ?)",
-                arrayOf(peerId, nombre, System.currentTimeMillis()))
+            db.execSQL(
+                "INSERT INTO usuario (peerId, nombre, fechaRegistro) VALUES (?, ?, ?)",
+                arrayOf(peerId, nombre, System.currentTimeMillis())
+            )
             if (esCuidador)
                 db.execSQL("INSERT INTO cuidador (usuarioPeerId, nivelPermisos) VALUES (?, ?)", arrayOf(peerId, 1))
             else
@@ -636,13 +755,14 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val lista = mutableListOf<com.alberto.medp2p_poc.Paciente>()
         val db = this.readableDatabase
         val cursor = db.rawQuery(
-            "SELECT u.peerId, u.nombre FROM paciente p INNER JOIN usuario u ON p.usuarioPeerId = u.peerId", null
+            "SELECT u.peerId, u.nombre FROM paciente p INNER JOIN usuario u ON p.usuarioPeerId = u.peerId",
+            null
         )
         try {
             if (cursor.moveToFirst()) {
                 do {
                     lista.add(com.alberto.medp2p_poc.Paciente(
-                        alias = cursor.getString(1),
+                        alias        = cursor.getString(1),
                         peerIdGlobal = cursor.getString(0)
                     ))
                 } while (cursor.moveToNext())
@@ -658,8 +778,10 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val db = this.writableDatabase
         try {
             db.beginTransaction()
-            db.execSQL("INSERT OR IGNORE INTO usuario (peerId, nombre, fechaRegistro) VALUES (?, ?, ?)",
-                arrayOf(peerId, alias, System.currentTimeMillis()))
+            db.execSQL(
+                "INSERT OR IGNORE INTO usuario (peerId, nombre, fechaRegistro) VALUES (?, ?, ?)",
+                arrayOf(peerId, alias, System.currentTimeMillis())
+            )
             db.execSQL("INSERT OR IGNORE INTO paciente (usuarioPeerId) VALUES (?)", arrayOf(peerId))
             db.setTransactionSuccessful()
         } finally {

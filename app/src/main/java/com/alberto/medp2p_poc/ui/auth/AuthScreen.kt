@@ -160,7 +160,21 @@ fun AuthScreen(viewModel: AuthViewModel) {
                             SuccessCard(displayName = state.session.displayName)
                         }
                         is AuthUiState.Error -> {
-                            LoadingCard(message = "Un momento...")
+                            when (val prev = state.previousState) {
+                                is AuthUiState.ShowLogin -> LoginCard(
+                                    displayName = prev.displayName,
+                                    onLogin = { password -> viewModel.login(password) },
+                                    onResetProfile = { viewModel.resetProfile() }
+                                )
+                                is AuthUiState.ShowRegistration -> RegistrationCard(
+                                    onRegister = { name, password, role -> viewModel.register(name, password, role) }
+                                )
+                                else -> LoginCard(
+                                    displayName = "",
+                                    onLogin = { password -> viewModel.login(password) },
+                                    onResetProfile = { viewModel.resetProfile() }
+                                )
+                            }
                         }
                     }
                 }

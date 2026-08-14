@@ -29,6 +29,10 @@ import com.alberto.medp2p_poc.data.model.Patient
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.outlined.ArrowBack
 
 // ──────────────────────────────────────────────────────────────────────
 // JUSTIFICACIÓN ARQUITECTÓNICA:
@@ -68,29 +72,72 @@ private object PatColors {
 // ══════════════════════════════════════════════════════════════
 // ══ PANTALLA PRINCIPAL ═══════════════════════════════════════
 // ══════════════════════════════════════════════════════════════
-
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PantallaPacientes(
     viewModel: PatientsViewModel,
-    onPacienteSeleccionado: (peerId: String) -> Unit
+    onPacienteSeleccionado: (peerId: String) -> Unit,
+    onBack: () -> Unit = {}
+
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showLinkDialog by remember { mutableStateOf(false) }
+    var fabExpanded by remember { mutableStateOf(false) }
+    var showQrScanDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.loadPatients() }
 
     Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Mis Pacientes", fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Outlined.ArrowBack, contentDescription = "Volver")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = PatColors.SurfaceWhite)
+            )
+        },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { showLinkDialog = true },
-                containerColor = PatColors.PrimaryBlue,
-                contentColor = Color.White,
-                shape = RoundedCornerShape(16.dp),
-                elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 6.dp)
-            ) {
-                Icon(Icons.Outlined.PersonAdd, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Vincular", fontWeight = FontWeight.Bold)
+            Column(horizontalAlignment = Alignment.End) {
+                AnimatedVisibility(visible = fabExpanded) {
+                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SmallFloatingActionButton(
+                            onClick = { fabExpanded = false; showLinkDialog = true },
+                            containerColor = PatColors.PrimaryBlue,
+                            contentColor = Color.White
+                        ) {
+                            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.Edit, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Añadir manualmente", fontSize = 13.sp)
+                            }
+                        }
+                        SmallFloatingActionButton(
+                            onClick = { fabExpanded = false; showQrScanDialog = true },
+                            containerColor = PatColors.PrimaryBlue,
+                            contentColor = Color.White
+                        ) {
+                            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.QrCodeScanner, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Escanear QR", fontSize = 13.sp)
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                    }
+                }
+                ExtendedFloatingActionButton(
+                    onClick = { fabExpanded = !fabExpanded },
+                    containerColor = PatColors.PrimaryBlue,
+                    contentColor = Color.White,
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Icon(if (fabExpanded) Icons.Outlined.Close else Icons.Outlined.PersonAdd, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Vincular", fontWeight = FontWeight.Bold)
+                }
             }
         },
         containerColor = PatColors.SurfaceWhite
@@ -151,7 +198,17 @@ fun PantallaPacientes(
             }
         )
     }
+    if (showQrScanDialog) {
+        // Placeholder — sustituir por tu QrScannerDialog cuando esté lista
+        AlertDialog(
+            onDismissRequest = { showQrScanDialog = false },
+            title = { Text("Escanear QR") },
+            text = { Text("Aquí irá el escáner de QR del paciente.") },
+            confirmButton = { TextButton(onClick = { showQrScanDialog = false }) { Text("Cerrar") } }
+        )
+    }
 }
+
 
 // ══════════════════════════════════════════════════════════════
 // ══ CABECERA: TÍTULO + BARRA DE BÚSQUEDA + FILTRO ═══════════

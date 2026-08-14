@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.alberto.medp2p_poc.data.model.UserRole
 import com.alberto.medp2p_poc.ui.dashboard.DashboardViewModel
 import java.io.File
 
@@ -56,6 +57,15 @@ fun ProfileScreen(
     var displayName      by remember(data.displayName) { mutableStateOf(data.displayName) }
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var saved            by remember { mutableStateOf(false) }
+
+    // ── AÑADIDO: Estado de las alergias y carga inicial ──
+    var allergies by remember(data.ownerPeerId) { mutableStateOf("") }
+
+    LaunchedEffect(data.ownerPeerId) {
+        if (data.role == UserRole.PATIENT) {
+            allergies = dashboardViewModel.getOwnAllergies()
+        }
+    }
 
     // ── FIX FALLO 2: cargar foto persistida desde filesDir al entrar ──
     // Si data.photoUri no está vacío, cargamos el archivo local.
@@ -179,6 +189,27 @@ fun ProfileScreen(
                             cursorColor          = ProfileColors.PrimaryBlue
                         )
                     )
+
+                    // ── AÑADIDO: Campo de alergias solo si el usuario es PACIENTE ──
+                    if (data.role == UserRole.PATIENT) {
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value         = allergies,
+                            onValueChange = { allergies = it; saved = false },
+                            label         = { Text("Alergias registradas") },
+                            placeholder   = { Text("Ej: Penicilina, látex...") },
+                            leadingIcon   = { Icon(Icons.Outlined.Warning, null, tint = ProfileColors.PrimaryBlue) },
+                            singleLine    = false,
+                            maxLines      = 3,
+                            shape         = RoundedCornerShape(14.dp),
+                            modifier      = Modifier.fillMaxWidth(),
+                            colors        = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor   = ProfileColors.PrimaryBlue,
+                                unfocusedBorderColor = ProfileColors.DividerLight,
+                                cursorColor          = ProfileColors.PrimaryBlue
+                            )
+                        )
+                    }
                 }
             }
 
@@ -223,6 +254,12 @@ fun ProfileScreen(
                     // 2. Guardar en DB y actualizar el estado reactivo del ViewModel.
                     //    El TopBar observa dashboardData.photoUri y se actualiza automáticamente.
                     dashboardViewModel.updateProfile(displayName, finalPhotoUri)
+
+                    // ── AÑADIDO: Guardar las alergias si es paciente ──
+                    if (data.role == UserRole.PATIENT) {
+                        dashboardViewModel.updateOwnAllergies(allergies)
+                    }
+
                     saved = true
                 },
                 modifier  = Modifier.fillMaxWidth().height(54.dp),

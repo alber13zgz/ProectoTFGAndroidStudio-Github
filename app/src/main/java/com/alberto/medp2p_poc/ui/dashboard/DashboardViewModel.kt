@@ -251,6 +251,22 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 emptyList()
             }
         }
+    suspend fun getOwnAllergies(): String = withContext(Dispatchers.IO) {
+        dbHelper.obtenerPacienteClinicoPorPeerId(
+            peerId = _dashboard.value.ownerPeerId,
+            ownerPeerId = _dashboard.value.ownerPeerId
+        )?.allergies ?: ""
+    }
+
+    fun updateOwnAllergies(allergies: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dbHelper.actualizarAlergiasPaciente(
+                peerId      = _dashboard.value.ownerPeerId,
+                ownerPeerId = _dashboard.value.ownerPeerId,
+                allergies   = allergies
+            )
+        }
+    }
 
     override fun onCleared() {
         super.onCleared()

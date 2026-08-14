@@ -166,14 +166,7 @@ fun PantallaDashboardClinico(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // ── Compartir mi codigo → dialogo QR ──
-            QuickActionCard(
-                icon = Icons.Outlined.QrCode,
-                title = "Compartir mi codigo",
-                subtitle = "Muestra tu QR para que te vinculen",
-                accentColor = DashColors.Purple,
-                onClick = { showShareQrDialog = true }
-            )
+
 
             Spacer(modifier = Modifier.height(20.dp))
 

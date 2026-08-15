@@ -68,6 +68,27 @@ data class LinkDoctorPayload(
     val doctorName: String
 )
 
+@Serializable
+data class PautaPayload(
+    val id: String,
+    val patientPeerId: String,
+    val doctorCreatorPeerId: String,
+    val medicacion: String,
+    val dosis: String,
+    val frecuenciaDiaria: Int,
+    val fechaInicio: Long,
+    val fechaFin: Long
+)
+
+@Serializable
+data class SuministroPayload(
+    val id: String,
+    val pautaId: String,
+    val patientPeerId: String,
+    val doctorAdministeredPeerId: String,
+    val timestampSuministro: Long
+)
+
 class P2PMessagingService(
     private val context: Context,
     private val dbHelper: AppDatabaseHelper
@@ -81,6 +102,8 @@ class P2PMessagingService(
         private const val TAG = "P2P_MSG_SERVICE"
         const val TYPE_MEDICAL_RECORD = "MEDICAL_RECORD"
         const val TYPE_LINK_DOCTOR    = "LINK_DOCTOR"
+        const val TYPE_SEND_PAUTA       = "SEND_PAUTA"
+        const val TYPE_SUMINISTRO_PAUTA = "SUMINISTRO_PAUTA"
     }
 
     private val _incomingMessages = MutableSharedFlow<MedicalRecord>(
@@ -120,8 +143,10 @@ class P2PMessagingService(
                             val type = jsonElement.jsonObject["type"]
                                 ?.jsonPrimitive?.content ?: TYPE_MEDICAL_RECORD
                             when (type) {
-                                TYPE_MEDICAL_RECORD -> handleMedicalRecord(ctx, jsonString)
-                                TYPE_LINK_DOCTOR    -> handleLinkDoctor(ctx, jsonString)
+                                TYPE_MEDICAL_RECORD   -> handleMedicalRecord(ctx, jsonString)
+                                TYPE_LINK_DOCTOR      -> handleLinkDoctor(ctx, jsonString)
+                                TYPE_SEND_PAUTA       -> handleSendPauta(ctx, jsonString)
+                                TYPE_SUMINISTRO_PAUTA -> handleSuministroPauta(ctx, jsonString)
                                 else -> Log.w(TAG, "[RECEPTOR] Tipo desconocido: $type.")
                             }
                         } catch (e: Exception) {
@@ -183,6 +208,53 @@ class P2PMessagingService(
             }
         } catch (e: Exception) {
             Log.e(TAG, "[RECEPTOR] Error procesando LINK_DOCTOR: ${e.message}")
+        }
+    }
+
+    private fun handleSendPauta(ctx: ChannelHandlerContext, jsonString: String) {
+        try {
+            val envelope = json.decodeFromString<P2PEnvelope>(jsonString)
+            val decryptedJson = CryptoUtils.decrypt(envelope.payload, ownerPeerId)
+            val p = json.decodeFromString<PautaPayload>(decryptedJson)
+            serviceScope.launch {
+                dbHelper.insertarPautaMedicaV2(
+                    com.alberto.medp2p_poc.data.model.PautaMedicaV2(
+                        id = p.id, patientPeerId = p.patientPeerId,
+                        doctorCreatorPeerId = p.doctorCreatorPeerId,
+                        medicacion = p.medicacion, dosis = p.dosis,
+                        frecuenciaDiaria = p.frecuenciaDiaria,
+                        fechaInicio = p.fechaInicio, fechaFin = p.fechaFin
+                    )
+                )
+                Log.i(TAG, "[RECEPTOR] PautaMedicaV2 guardada: ${p.medicacion}")
+                _syncEvents.emit(System.currentTimeMillis())
+                sendAck(ctx)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "[RECEPTOR] Error procesando SEND_PAUTA: ${e.message}")
+        }
+    }
+
+    private fun handleSuministroPauta(ctx: ChannelHandlerContext, jsonString: String) {
+        try {
+            val envelope = json.decodeFromString<P2PEnvelope>(jsonString)
+            val decryptedJson = CryptoUtils.decrypt(envelope.payload, ownerPeerId)
+            val s = json.decodeFromString<SuministroPayload>(decryptedJson)
+            serviceScope.launch {
+                dbHelper.insertarRegistroSuministro(
+                    com.alberto.medp2p_poc.data.model.RegistroSuministro(
+                        id = s.id, pautaId = s.pautaId,
+                        patientPeerId = s.patientPeerId,
+                        doctorAdministeredPeerId = s.doctorAdministeredPeerId,
+                        timestampSuministro = s.timestampSuministro
+                    )
+                )
+                Log.i(TAG, "[RECEPTOR] RegistroSuministro guardado: pauta=${s.pautaId.take(8)}")
+                _syncEvents.emit(System.currentTimeMillis())
+                sendAck(ctx)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "[RECEPTOR] Error procesando SUMINISTRO_PAUTA: ${e.message}")
         }
     }
 
@@ -267,6 +339,51 @@ class P2PMessagingService(
 
         Log.i(TAG, "[LINK_DOCTOR] Enviando vinculación a $destPeerId")
         sendEnvelope(host, json.encodeToString(envelope), doctorPeerId)
+    }
+
+    suspend fun sendPautaMessage(
+        host: Host,
+        destinationCircuitAddr: String,
+        pauta: com.alberto.medp2p_poc.data.model.PautaMedicaV2
+    ): Unit = withContext(Dispatchers.IO) {
+        val destPeerId = destinationCircuitAddr.substringAfterLast("/")
+        val payloadJson = json.encodeToString(PautaPayload(
+            id = pauta.id, patientPeerId = pauta.patientPeerId,
+            doctorCreatorPeerId = pauta.doctorCreatorPeerId,
+            medicacion = pauta.medicacion, dosis = pauta.dosis,
+            frecuenciaDiaria = pauta.frecuenciaDiaria,
+            fechaInicio = pauta.fechaInicio, fechaFin = pauta.fechaFin
+        ))
+        val encryptedPayload = CryptoUtils.encrypt(payloadJson, destPeerId)
+        val envelope = P2PEnvelope(
+            type = TYPE_SEND_PAUTA, destPeerId = destPeerId,
+            senderPeerId = ownerPeerId, payload = encryptedPayload
+        )
+        Log.i(TAG, "[SEND_PAUTA] Enviando pauta a $destPeerId")
+        val success = sendEnvelope(host, json.encodeToString(envelope), pauta.id)
+        if (success) _syncEvents.emit(System.currentTimeMillis())
+    }
+
+    suspend fun sendSuministroMessage(
+        host: Host,
+        destinationCircuitAddr: String,
+        registro: com.alberto.medp2p_poc.data.model.RegistroSuministro
+    ): Unit = withContext(Dispatchers.IO) {
+        val destPeerId = destinationCircuitAddr.substringAfterLast("/")
+        val payloadJson = json.encodeToString(SuministroPayload(
+            id = registro.id, pautaId = registro.pautaId,
+            patientPeerId = registro.patientPeerId,
+            doctorAdministeredPeerId = registro.doctorAdministeredPeerId,
+            timestampSuministro = registro.timestampSuministro
+        ))
+        val encryptedPayload = CryptoUtils.encrypt(payloadJson, destPeerId)
+        val envelope = P2PEnvelope(
+            type = TYPE_SUMINISTRO_PAUTA, destPeerId = destPeerId,
+            senderPeerId = ownerPeerId, payload = encryptedPayload
+        )
+        Log.i(TAG, "[SUMINISTRO] Enviando suministro a $destPeerId")
+        val success = sendEnvelope(host, json.encodeToString(envelope), registro.id)
+        if (success) _syncEvents.emit(System.currentTimeMillis())
     }
 
     private suspend fun sendEnvelope(

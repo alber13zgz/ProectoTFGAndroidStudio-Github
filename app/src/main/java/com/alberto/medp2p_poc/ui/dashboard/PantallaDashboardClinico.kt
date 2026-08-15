@@ -70,6 +70,8 @@ fun PantallaDashboardClinico(
     onNavigateToProfile: () -> Unit = {}
 ) {
     val data by viewModel.dashboard.collectAsStateWithLifecycle()
+    // ── AÑADIDO: Recoger el StateFlow de alertas de forma reactiva ──
+    val alertas by viewModel.alertasPendientes.collectAsStateWithLifecycle()
 
     // ── Estado del BottomSheet de vinculacion ──
     var showLinkSheet by remember { mutableStateOf(false) }
@@ -79,7 +81,7 @@ fun PantallaDashboardClinico(
     var showShareQrDialog by remember { mutableStateOf(false) }
     // ── Estado para el peerId pre-rellenado (desde QR o manual) ──
     var scannedPeerId by remember { mutableStateOf("") }
-    
+
     val context = LocalContext.current
     val scannerOptions = remember {
         GmsBarcodeScannerOptions.Builder()
@@ -129,7 +131,7 @@ fun PantallaDashboardClinico(
                 MetricCard(
                     icon = Icons.Outlined.Notifications,
                     label = "Alertas\npendientes",
-                    value = "${data.pendingNotifications}",
+                    value = "${alertas.size}", // <-- ACTUAILZADO A REACTIVO
                     backgroundColor = DashColors.CountCardPurple,
                     iconTint = DashColors.Purple,
                     modifier = Modifier.weight(1f)
@@ -164,11 +166,31 @@ fun PantallaDashboardClinico(
                 accentColor = DashColors.AccentMint
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-
-
             Spacer(modifier = Modifier.height(20.dp))
+
+            // ══════════════════════════════════════════════════════════════
+            // ══ SECCIÓN AÑADIDA: ALERTAS DE MEDICACIÓN HOY ══════════════
+            // ══════════════════════════════════════════════════════════════
+            if (alertas.isNotEmpty()) {
+                Text(
+                    text = "Alertas de Medicacion (Hoy)",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = DashColors.TextPrimary,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+                alertas.forEach { pauta ->
+                    AlertaMedicacionCard(
+                        pauta = pauta,
+                        onSuministrada = {
+                            viewModel.registrarSuministro(pauta.id, pauta.patientPeerId)
+                        }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+
 
             Text(
                 text = "Actividad reciente",
@@ -636,6 +658,63 @@ private fun RecentActivityPlaceholder() {
             Spacer(Modifier.height(12.dp))
             Text("Sin actividad reciente", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = DashColors.TextSecondary)
             Text("Las sincronizaciones con pacientes apareceran aqui", fontSize = 12.sp, color = DashColors.TextSecondary.copy(alpha = 0.7f), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// ══ COMPONENTE AÑADIDO: TARJETA DE ALERTA DE MEDICACIÓN ═════
+// ══════════════════════════════════════════════════════════════
+@Composable
+private fun AlertaMedicacionCard(
+    pauta: com.alberto.medp2p_poc.data.model.PautaMedicaV2,
+    onSuministrada: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(3.dp),
+        colors = CardDefaults.cardColors(containerColor = DashColors.CardWhite)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(DashColors.WarningAmberBg),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Outlined.Medication, null,
+                    Modifier.size(22.dp), tint = DashColors.WarningAmber
+                )
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = pauta.medicacion,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = DashColors.TextPrimary
+                )
+                Text(
+                    text = "Dosis: ${pauta.dosis}  ·  ${pauta.frecuenciaDiaria}x/día",
+                    fontSize = 12.sp,
+                    color = DashColors.TextSecondary
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Button(
+                onClick = onSuministrada,
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = DashColors.AccentMint)
+            ) {
+                Text("Suministrada", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }

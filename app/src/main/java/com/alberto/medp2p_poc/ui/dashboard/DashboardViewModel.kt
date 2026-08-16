@@ -52,9 +52,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private val _medicosVinculados = MutableStateFlow<List<Triple<String, String, Long>>>(emptyList())
     val medicosVinculados: StateFlow<List<Triple<String, String, Long>>> = _medicosVinculados.asStateFlow()
 
-    // ── AÑADIDO: StateFlow de Alertas Pendientes (PAUTAS MÉDICAS) ──
+    // ── StateFlow de Alertas Pendientes (PAUTAS MÉDICAS) ──
     private val _alertasPendientes = MutableStateFlow<List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>>(emptyList())
     val alertasPendientes: StateFlow<List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>> = _alertasPendientes.asStateFlow()
+
+    // ── AÑADIDO (PASO 3): StateFlow de la lista de Pacientes del Doctor (para el Dropdown) ──
+    private val _pacientesDoctor = MutableStateFlow<List<com.alberto.medp2p_poc.data.model.Patient>>(emptyList())
+    val pacientesDoctor: StateFlow<List<com.alberto.medp2p_poc.data.model.Patient>> = _pacientesDoctor.asStateFlow()
 
     private fun loadAlertasPendientes() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -63,6 +67,12 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             } catch (e: Exception) {
                 Log.e(TAG, "Error cargando alertas: ${e.message}")
             }
+        }
+    }
+
+    private fun loadPacientesDoctor() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _pacientesDoctor.value = dbHelper.obtenerPacientesClinico(_dashboard.value.ownerPeerId)
         }
     }
 
@@ -95,29 +105,25 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         )
         messagingService = P2PMessagingService(getApplication(), dbHelper)
 
-        // ── FIX FALLO 3: colectar syncEvents del servicio ─────────────
-        // Cada vez que el servicio emite un timestamp de sincronización
-        // (al recibir o enviar un mensaje con éxito), actualizamos
-        // lastSyncTimestamp en DashboardData para que la SyncStatusCard
-        // muestre la hora real de la última actividad P2P.
         viewModelScope.launch {
             messagingService.syncEvents.collect { timestamp ->
                 _dashboard.value = _dashboard.value.copy(lastSyncTimestamp = timestamp)
                 Log.d(TAG, "[SYNC] Última sincronización actualizada: $timestamp")
 
-                // ── FIX UI REACTIVA: Recargamos los datos al haber actividad P2P ──
+                // Recargamos los datos al haber actividad P2P
                 loadMedicosVinculados()
                 loadAlertasPendientes()
+                loadPacientesDoctor()
             }
         }
 
         loadDashboardCounters()
-        loadMedicosVinculados() // ── FIX UI REACTIVA: Carga inicial de médicos
-        loadAlertasPendientes() // ── AÑADIDO: Carga inicial de alertas
+        loadMedicosVinculados()
+        loadAlertasPendientes()
+        loadPacientesDoctor() // Carga inicial para el formulario
         startP2PNode(privateKey)
     }
 
-    // ── FIX UI REACTIVA: Función privada que vuelca la BD en el Flow ──
     private fun loadMedicosVinculados() {
         viewModelScope.launch(Dispatchers.IO) {
             _medicosVinculados.value = getMedicosVinculados()
@@ -209,6 +215,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 dbHelper.insertarPacienteClinico(patient, owner)
                 Log.d(TAG, "✅ Paciente vinculado: ${patient.fullName}")
                 loadDashboardCounters()
+                loadPacientesDoctor() // Recargar lista para el Dropdown
 
                 val node = activeHost ?: return@launch
                 val destAddr = "$RELAY_BASE/p2p-circuit/p2p/${peerId.trim()}"
@@ -255,7 +262,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    // ── FIX FALLO 2: getMedicosVinculados en IO para evitar bloqueo ──
     suspend fun getMedicosVinculados(): List<Triple<String, String, Long>> =
         withContext(Dispatchers.IO) {
             try {
@@ -282,10 +288,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             )
         }
     }
-
-    // ══════════════════════════════════════════════════════════════
-    // ══ FUNCIONES DE PAUTAS MÉDICAS ═════════════════════════════
-    // ══════════════════════════════════════════════════════════════
 
     fun crearPauta(
         patientPeerId: String,
@@ -325,7 +327,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 doctorAdministeredPeerId = owner
             )
             dbHelper.insertarRegistroSuministro(registro)
-            loadAlertasPendientes()  // recarga → la alerta desaparece del StateFlow
+            loadAlertasPendientes()
             Log.d(TAG, "✅ Suministro registrado: pauta=$pautaId")
 
             val node = activeHost ?: return@launch

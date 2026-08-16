@@ -1,5 +1,6 @@
 package com.alberto.medp2p_poc.ui.patients
 
+import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -33,6 +34,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.ui.platform.LocalContext
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
 // ──────────────────────────────────────────────────────────────────────
 // JUSTIFICACIÓN ARQUITECTÓNICA:
@@ -78,12 +83,22 @@ fun PantallaPacientes(
     viewModel: PatientsViewModel,
     onPacienteSeleccionado: (peerId: String) -> Unit,
     onBack: () -> Unit = {}
-
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showLinkDialog by remember { mutableStateOf(false) }
     var fabExpanded by remember { mutableStateOf(false) }
-    var showQrScanDialog by remember { mutableStateOf(false) }
+
+    // ── AÑADIDO: Configuración del Escáner QR de ML Kit ──
+    val context = LocalContext.current
+    var scannedPeerId by remember { mutableStateOf("") }
+
+    val scannerOptions = remember {
+        GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .enableAutoZoom()
+            .build()
+    }
+    val scanner = remember(context) { GmsBarcodeScanning.getClient(context, scannerOptions) }
 
     LaunchedEffect(Unit) { viewModel.loadPatients() }
 
@@ -104,7 +119,11 @@ fun PantallaPacientes(
                 AnimatedVisibility(visible = fabExpanded) {
                     Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         SmallFloatingActionButton(
-                            onClick = { fabExpanded = false; showLinkDialog = true },
+                            onClick = {
+                                fabExpanded = false
+                                scannedPeerId = "" // Limpiar por si acaso
+                                showLinkDialog = true
+                            },
                             containerColor = PatColors.PrimaryBlue,
                             contentColor = Color.White
                         ) {
@@ -114,8 +133,24 @@ fun PantallaPacientes(
                                 Text("Añadir manualmente", fontSize = 13.sp)
                             }
                         }
+                        // ── AÑADIDO: Botón Escanear con la cámara real ──
                         SmallFloatingActionButton(
-                            onClick = { fabExpanded = false; showQrScanDialog = true },
+                            onClick = {
+                                fabExpanded = false
+                                scanner.startScan()
+                                    .addOnSuccessListener { barcode ->
+                                        val raw = barcode.rawValue
+                                        if (!raw.isNullOrBlank()) {
+                                            scannedPeerId = raw
+                                            showLinkDialog = true
+                                        } else {
+                                            Toast.makeText(context, "QR no válido", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                    .addOnFailureListener {
+                                        Toast.makeText(context, "Escaneo cancelado", Toast.LENGTH_SHORT).show()
+                                    }
+                            },
                             containerColor = PatColors.PrimaryBlue,
                             contentColor = Color.White
                         ) {
@@ -189,22 +224,19 @@ fun PantallaPacientes(
         }
     }
 
+    // ── AÑADIDO: Pasamos el initialPeerId al diálogo ──
     if (showLinkDialog) {
         LinkPatientDialog(
-            onDismiss = { showLinkDialog = false },
+            initialPeerId = scannedPeerId,
+            onDismiss = {
+                showLinkDialog = false
+                scannedPeerId = ""
+            },
             onConfirm = { name, peerId, allergies ->
                 viewModel.linkPatient(name, peerId, allergies)
                 showLinkDialog = false
+                scannedPeerId = ""
             }
-        )
-    }
-    if (showQrScanDialog) {
-        // Placeholder — sustituir por tu QrScannerDialog cuando esté lista
-        AlertDialog(
-            onDismissRequest = { showQrScanDialog = false },
-            title = { Text("Escanear QR") },
-            text = { Text("Aquí irá el escáner de QR del paciente.") },
-            confirmButton = { TextButton(onClick = { showQrScanDialog = false }) { Text("Cerrar") } }
         )
     }
 }
@@ -531,16 +563,18 @@ private fun PatientCard(
 }
 
 // ══════════════════════════════════════════════════════════════
-// ══ DIÁLOGO DE VINCULACIÓN ══════════════════════���═══════════
+// ══ DIÁLOGO DE VINCULACIÓN ═══════════════════════════════════
 // ══════════════════════════════════════════════════════════════
 
+// ── AÑADIDO: initialPeerId para pre-rellenar desde el escáner ──
 @Composable
 private fun LinkPatientDialog(
+    initialPeerId: String = "",
     onDismiss: () -> Unit,
     onConfirm: (name: String, peerId: String, allergies: String) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
-    var code by remember { mutableStateOf("") }
+    var code by remember(initialPeerId) { mutableStateOf(initialPeerId) }
     var allergies by remember { mutableStateOf("") }
 
     AlertDialog(

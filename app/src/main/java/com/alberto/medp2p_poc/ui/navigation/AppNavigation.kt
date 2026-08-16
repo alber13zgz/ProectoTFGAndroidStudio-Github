@@ -164,7 +164,8 @@ fun ClinicalAppNavigation(
                     viewModel              = patientsViewModel,
                     onPacienteSeleccionado = { peerId ->
                         navController.navigate("patient_detail/$peerId")
-                    }
+                    },
+                    onBack = { navController.popBackStack() }
                 )
             }
 

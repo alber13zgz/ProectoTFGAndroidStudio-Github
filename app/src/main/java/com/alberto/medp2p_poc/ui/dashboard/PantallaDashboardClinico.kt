@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import android.widget.Toast
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -81,7 +82,8 @@ fun PantallaDashboardClinico(
     var showShareQrDialog by remember { mutableStateOf(false) }
     // ── Estado para el peerId pre-rellenado (desde QR o manual) ──
     var scannedPeerId by remember { mutableStateOf("") }
-
+    var showNuevaPautaSheet by remember { mutableStateOf(false) }
+    val pacientes by viewModel.pacientesDoctor.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scannerOptions = remember {
         GmsBarcodeScannerOptions.Builder()
@@ -163,7 +165,16 @@ fun PantallaDashboardClinico(
                 icon = Icons.Outlined.MedicalServices,
                 title = "Nueva pauta medica",
                 subtitle = "Anade medicacion a un paciente vinculado",
-                accentColor = DashColors.AccentMint
+                accentColor = DashColors.AccentMint,
+                onClick = {
+                    if (data.patientCount == 0) {
+                        android.widget.Toast.makeText(
+                            context, "Todavia no hay pacientes vinculados", android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        showNuevaPautaSheet = true
+                    }
+                }
             )
 
             Spacer(modifier = Modifier.height(20.dp))
@@ -297,6 +308,24 @@ fun PantallaDashboardClinico(
             peerId = data.displayName, // Usamos el peerId real del nodo
             viewModel = viewModel,
             onDismiss = { showShareQrDialog = false }
+        )
+    }
+
+    if (showNuevaPautaSheet) {
+        NuevaPautaBottomSheet(
+            pacientes = pacientes,
+            onDismiss = { showNuevaPautaSheet = false },
+            onConfirm = { patientPeerId, medicacion, dosis, frecuencia ->
+                viewModel.crearPauta(
+                    patientPeerId    = patientPeerId,
+                    medicacion       = medicacion,
+                    dosis            = dosis,
+                    frecuenciaDiaria = frecuencia,
+                    fechaInicio      = System.currentTimeMillis(),
+                    fechaFin         = System.currentTimeMillis() + 7L * 24 * 60 * 60 * 1000
+                )
+                showNuevaPautaSheet = false
+            }
         )
     }
 }
@@ -728,4 +757,98 @@ private fun saludoSegunHora(): String {
 
 private fun formatTimestamp(timestamp: Long): String {
     return SimpleDateFormat("HH:mm - dd/MM/yyyy", Locale.getDefault()).format(Date(timestamp))
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NuevaPautaBottomSheet(
+    pacientes: List<com.alberto.medp2p_poc.data.model.Patient>,
+    onDismiss: () -> Unit,
+    onConfirm: (patientPeerId: String, medicacion: String, dosis: String, frecuencia: Int) -> Unit
+) {
+    var selectedPatient  by remember { mutableStateOf(pacientes.firstOrNull()) }
+    var dropdownExpanded by remember { mutableStateOf(false) }
+    var medicacion       by remember { mutableStateOf("") }
+    var dosis            by remember { mutableStateOf("") }
+    var frecuenciaText   by remember { mutableStateOf("1") }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        containerColor = DashColors.CardWhite
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text("Nueva Pauta Medica", fontSize = 20.sp,
+                fontWeight = FontWeight.Bold, color = DashColors.TextPrimary)
+            Text("La pauta durara 7 dias desde hoy", fontSize = 12.sp, color = DashColors.TextSecondary)
+
+            ExposedDropdownMenuBox(
+                expanded = dropdownExpanded,
+                onExpandedChange = { dropdownExpanded = !dropdownExpanded }
+            ) {
+                OutlinedTextField(
+                    value = selectedPatient?.fullName ?: "Selecciona un paciente",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Paciente") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(dropdownExpanded) },
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                )
+                ExposedDropdownMenu(
+                    expanded = dropdownExpanded,
+                    onDismissRequest = { dropdownExpanded = false }
+                ) {
+                    pacientes.forEach { patient ->
+                        DropdownMenuItem(
+                            text = { Text(patient.fullName) },
+                            onClick = { selectedPatient = patient; dropdownExpanded = false }
+                        )
+                    }
+                }
+            }
+
+            OutlinedTextField(value = medicacion, onValueChange = { medicacion = it },
+                label = { Text("Medicacion") }, placeholder = { Text("Ej: Ibuprofeno") },
+                singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+
+            OutlinedTextField(value = dosis, onValueChange = { dosis = it },
+                label = { Text("Dosis") }, placeholder = { Text("Ej: 400mg") },
+                singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+
+            OutlinedTextField(
+                value = frecuenciaText,
+                onValueChange = { if (it.all(Char::isDigit) && it.length <= 2) frecuenciaText = it },
+                label = { Text("Frecuencia diaria (veces/dia)") },
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            val frecuencia = frecuenciaText.toIntOrNull() ?: 0
+            val formValid  = selectedPatient != null && medicacion.isNotBlank()
+                    && dosis.isNotBlank() && frecuencia > 0
+
+            Button(
+                onClick = { if (formValid) onConfirm(selectedPatient!!.peerId, medicacion, dosis, frecuencia) },
+                enabled  = formValid,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape    = RoundedCornerShape(16.dp),
+                colors   = ButtonDefaults.buttonColors(containerColor = DashColors.AccentMint)
+            ) {
+                Icon(Icons.Outlined.MedicalServices, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Crear Pauta", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            }
+        }
+    }
 }

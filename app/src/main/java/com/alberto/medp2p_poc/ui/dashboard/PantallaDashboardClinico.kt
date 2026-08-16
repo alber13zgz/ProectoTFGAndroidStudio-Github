@@ -71,18 +71,14 @@ fun PantallaDashboardClinico(
     onNavigateToProfile: () -> Unit = {}
 ) {
     val data by viewModel.dashboard.collectAsStateWithLifecycle()
-    // ── AÑADIDO: Recoger el StateFlow de alertas de forma reactiva ──
     val alertas by viewModel.alertasPendientes.collectAsStateWithLifecycle()
 
-    // ── Estado del BottomSheet de vinculacion ──
     var showLinkSheet by remember { mutableStateOf(false) }
-    // ── Estado del dialogo de ID manual ──
     var showManualDialog by remember { mutableStateOf(false) }
-    // ── Estado del dialogo QR de "Compartir mi codigo" ──
     var showShareQrDialog by remember { mutableStateOf(false) }
-    // ── Estado para el peerId pre-rellenado (desde QR o manual) ──
     var scannedPeerId by remember { mutableStateOf("") }
     var showNuevaPautaSheet by remember { mutableStateOf(false) }
+    var showErrorNoPacientes by remember { mutableStateOf(false) }
     val pacientes by viewModel.pacientesDoctor.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scannerOptions = remember {
@@ -91,6 +87,7 @@ fun PantallaDashboardClinico(
             .enableAutoZoom()
             .build()
     }
+
     val scanner = remember(context) { GmsBarcodeScanning.getClient(context, scannerOptions) }
 
     Column(
@@ -115,7 +112,6 @@ fun PantallaDashboardClinico(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // ══ METRICAS — Pacientes clicable ══
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
@@ -133,7 +129,7 @@ fun PantallaDashboardClinico(
                 MetricCard(
                     icon = Icons.Outlined.Notifications,
                     label = "Alertas\npendientes",
-                    value = "${alertas.size}", // <-- ACTUAILZADO A REACTIVO
+                    value = "${alertas.size}",
                     backgroundColor = DashColors.CountCardPurple,
                     iconTint = DashColors.Purple,
                     modifier = Modifier.weight(1f)
@@ -150,7 +146,6 @@ fun PantallaDashboardClinico(
                 modifier = Modifier.padding(bottom = 12.dp)
             )
 
-            // ── Vincular paciente → abre BottomSheet ──
             QuickActionCard(
                 icon = Icons.Outlined.PersonAdd,
                 title = "Vincular paciente",
@@ -168,9 +163,7 @@ fun PantallaDashboardClinico(
                 accentColor = DashColors.AccentMint,
                 onClick = {
                     if (data.patientCount == 0) {
-                        android.widget.Toast.makeText(
-                            context, "Todavia no hay pacientes vinculados", android.widget.Toast.LENGTH_SHORT
-                        ).show()
+                        showErrorNoPacientes = true
                     } else {
                         showNuevaPautaSheet = true
                     }
@@ -179,9 +172,6 @@ fun PantallaDashboardClinico(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // ══════════════════════════════════════════════════════════════
-            // ══ SECCIÓN AÑADIDA: ALERTAS DE MEDICACIÓN HOY ══════════════
-            // ══════════════════════════════════════════════════════════════
             if (alertas.isNotEmpty()) {
                 Text(
                     text = "Alertas de Medicacion (Hoy)",
@@ -202,7 +192,6 @@ fun PantallaDashboardClinico(
                 Spacer(Modifier.height(12.dp))
             }
 
-
             Text(
                 text = "Actividad reciente",
                 fontSize = 18.sp,
@@ -216,9 +205,6 @@ fun PantallaDashboardClinico(
         }
     }
 
-    // ══════════════════════════════════════════════════════════════
-    // ══ BOTTOM SHEET: VINCULAR PACIENTE ═════════════════════════
-    // ══════════════════════════════════════════════════════════════
     if (showLinkSheet) {
         ModalBottomSheet(
             onDismissRequest = { showLinkSheet = false },
@@ -243,8 +229,6 @@ fun PantallaDashboardClinico(
                     color = DashColors.TextSecondary,
                     modifier = Modifier.padding(top = 4.dp, bottom = 24.dp)
                 )
-
-                // Opcion 1: Escanear QR
                 LinkOptionCard(
                     icon = Icons.Outlined.QrCodeScanner,
                     title = "Escanear Codigo QR",
@@ -261,17 +245,11 @@ fun PantallaDashboardClinico(
                                 }
                             }
                             .addOnFailureListener {
-                                // Reabrir el sheet — NO abrir el diálogo manual automáticamente.
-                                // El usuario elige si quiere intentar el QR de nuevo o ir manual.
                                 showLinkSheet = true
-
                             }
                     }
                 )
-
                 Spacer(Modifier.height(12.dp))
-
-                // Opcion 2: Escribir manualmente
                 LinkOptionCard(
                     icon = Icons.Outlined.Edit,
                     title = "Escribir ID manualmente",
@@ -283,13 +261,11 @@ fun PantallaDashboardClinico(
                         showManualDialog = true
                     }
                 )
-
                 Spacer(Modifier.height(32.dp))
             }
         }
     }
 
-    // ══ DIALOGO: ID MANUAL ══
     if (showManualDialog) {
         ManualLinkDialog(
             initialPeerId = scannedPeerId,
@@ -302,10 +278,9 @@ fun PantallaDashboardClinico(
         )
     }
 
-    // ══ DIALOGO: COMPARTIR MI QR ══
     if (showShareQrDialog) {
         ShareMyQrDialog(
-            peerId = data.displayName, // Usamos el peerId real del nodo
+            peerId = data.displayName,
             viewModel = viewModel,
             onDismiss = { showShareQrDialog = false }
         )
@@ -315,25 +290,72 @@ fun PantallaDashboardClinico(
         NuevaPautaBottomSheet(
             pacientes = pacientes,
             onDismiss = { showNuevaPautaSheet = false },
-            onConfirm = { patientPeerId, medicacion, dosis, frecuencia ->
+            onConfirm = { patientPeerId, medicacion, dosis, frecuencia, fechaInicio, fechaFin ->
                 viewModel.crearPauta(
                     patientPeerId    = patientPeerId,
                     medicacion       = medicacion,
                     dosis            = dosis,
                     frecuenciaDiaria = frecuencia,
-                    fechaInicio      = System.currentTimeMillis(),
-                    fechaFin         = System.currentTimeMillis() + 7L * 24 * 60 * 60 * 1000
+                    fechaInicio      = fechaInicio,
+                    fechaFin         = fechaFin
                 )
                 showNuevaPautaSheet = false
             }
         )
     }
-}
 
-// ══════════════════════════════════════════════════════════════
-// ══ BOTTOM SHEET LINK OPTION CARD ═══════════════════════════
-// ══════════════════════════════════════════════════════════════
 
+    if (showErrorNoPacientes) {
+        AlertDialog(
+            onDismissRequest = { showErrorNoPacientes = false },
+            icon = {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(DashColors.WarningAmber.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Outlined.Warning,
+                        contentDescription = null,
+                        modifier = Modifier.size(26.dp),
+                        tint = DashColors.WarningAmber
+                    )
+                }
+            },
+            title = {
+                Text(
+                    "Accion requerida",
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            text = {
+                Text(
+                    "No tienes pacientes vinculados en tu directorio. Vincula un paciente " +
+                            "mediante codigo QR o ID manual antes de recetar una pauta medica.",
+                    fontSize = 14.sp,
+                    color = DashColors.TextSecondary,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showErrorNoPacientes = false },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = DashColors.PrimaryBlue),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Entendido", fontWeight = FontWeight.Bold)
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = DashColors.CardWhite
+        )
+    }
 @Composable
 private fun LinkOptionCard(
     icon: ImageVector,
@@ -350,15 +372,11 @@ private fun LinkOptionCard(
         colors = CardDefaults.cardColors(containerColor = DashColors.SurfaceWhite)
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
                     .background(color.copy(alpha = 0.1f)),
                 contentAlignment = Alignment.Center
             ) {
@@ -374,10 +392,6 @@ private fun LinkOptionCard(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// ══ DIALOGO VINCULACION MANUAL ══════════════════════════════
-// ══════════════════════════════════════════════════════════════
-
 @Composable
 private fun ManualLinkDialog(
     initialPeerId: String,
@@ -392,9 +406,7 @@ private fun ManualLinkDialog(
         onDismissRequest = onDismiss,
         icon = {
             Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
                     .background(DashColors.PrimaryBlue.copy(alpha = 0.1f)),
                 contentAlignment = Alignment.Center
             ) {
@@ -406,28 +418,15 @@ private fun ManualLinkDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = name, onValueChange = { name = it },
-                    label = { Text("Nombre del paciente") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = peerId, onValueChange = { peerId = it },
-                    label = { Text("PeerId del paciente") },
-                    placeholder = { Text("Pegar aqui el codigo") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = allergies, onValueChange = { allergies = it },
-                    label = { Text("Alergias (opcional)") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
+                OutlinedTextField(value = name, onValueChange = { name = it },
+                    label = { Text("Nombre del paciente") }, singleLine = true,
+                    shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = peerId, onValueChange = { peerId = it },
+                    label = { Text("PeerId del paciente") }, placeholder = { Text("Pegar aqui el codigo") },
+                    singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = allergies, onValueChange = { allergies = it },
+                    label = { Text("Alergias (opcional)") }, singleLine = true,
+                    shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
             }
         },
         confirmButton = {
@@ -452,10 +451,6 @@ private fun ManualLinkDialog(
     )
 }
 
-// ══════════════════════════════════════════════════════════════
-// ══ DIALOGO: COMPARTIR MI QR ════════════════════════════════
-// ══════════════════════════════════════════════════════════════
-
 @Composable
 private fun ShareMyQrDialog(
     peerId: String,
@@ -466,9 +461,7 @@ private fun ShareMyQrDialog(
     val hostPeerId = viewModel.activeHost?.peerId?.toString() ?: "sin-nodo-activo"
     val clipboardManager = LocalClipboardManager.current
 
-    val qrBitmap: Bitmap? = remember(hostPeerId) {
-        generateQrBitmap(hostPeerId, 512)
-    }
+    val qrBitmap: Bitmap? = remember(hostPeerId) { generateQrBitmap(hostPeerId, 512) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -476,107 +469,57 @@ private fun ShareMyQrDialog(
             Text("Mi codigo de vinculacion", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         },
         text = {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth()
-            ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 if (qrBitmap != null) {
-                    Card(
-                        shape = RoundedCornerShape(16.dp),
-                        elevation = CardDefaults.cardElevation(4.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White)
-                    ) {
-                        Image(
-                            bitmap = qrBitmap.asImageBitmap(),
-                            contentDescription = "Codigo QR",
-                            modifier = Modifier
-                                .size(220.dp)
-                                .padding(12.dp)
-                        )
+                    Card(shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(4.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                        Image(bitmap = qrBitmap.asImageBitmap(), contentDescription = "Codigo QR",
+                            modifier = Modifier.size(220.dp).padding(12.dp))
                     }
                 } else {
                     Text("No se pudo generar el QR", color = DashColors.ErrorRed)
                 }
-
                 Spacer(Modifier.height(16.dp))
-
-                Text(
-                    text = hostPeerId,
-                    fontSize = 11.sp,
-                    color = DashColors.TextSecondary,
-                    textAlign = TextAlign.Center,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 8.dp)
-                )
-
+                Text(text = hostPeerId, fontSize = 11.sp, color = DashColors.TextSecondary,
+                    textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 8.dp))
                 Spacer(Modifier.height(12.dp))
-
-                OutlinedButton(
-                    onClick = {
-                        clipboardManager.setText(AnnotatedString(hostPeerId))
-                    },
-                    shape = RoundedCornerShape(12.dp)
-                ) {
+                OutlinedButton(onClick = { clipboardManager.setText(AnnotatedString(hostPeerId)) },
+                    shape = RoundedCornerShape(12.dp)) {
                     Icon(Icons.Outlined.ContentCopy, null, Modifier.size(16.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Copiar al portapapeles", fontSize = 13.sp)
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cerrar", fontWeight = FontWeight.Bold)
-            }
-        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cerrar", fontWeight = FontWeight.Bold) } },
         shape = RoundedCornerShape(24.dp)
     )
 }
 
-// ══════════════════════════════════════════════════════════════
-// ══ COMPONENTES EXISTENTES (sin cambios funcionales) ════════
-// ══════════════════════════════════════════════════════════════
-
 @Composable
 private fun DashboardHeader(displayName: String, role: UserRole) {
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(DashColors.PrimaryBlue, DashColors.PrimaryBlueDark)
-                )
-            )
+        modifier = Modifier.fillMaxWidth()
+            .background(Brush.verticalGradient(colors = listOf(DashColors.PrimaryBlue, DashColors.PrimaryBlueDark)))
             .padding(start = 24.dp, end = 24.dp, top = 20.dp, bottom = 48.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(saludoSegunHora(), fontSize = 14.sp, color = Color.White.copy(alpha = 0.8f))
-                Text(
-                    text = displayName.ifBlank { "Profesional" },
-                    fontSize = 24.sp, fontWeight = FontWeight.Bold,
-                    color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
+                Text(text = displayName.ifBlank { "Profesional" }, fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(4.dp))
                 Surface(shape = RoundedCornerShape(8.dp), color = Color.White.copy(alpha = 0.15f)) {
-                    Text(
-                        text = role.displayLabel, fontSize = 11.sp, color = Color.White,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
+                    Text(text = role.displayLabel, fontSize = 11.sp, color = Color.White,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
                 }
             }
-
             val initials = displayName.split(" ").take(2)
                 .mapNotNull { it.firstOrNull()?.uppercase() }.joinToString("")
-            Box(
-                modifier = Modifier.size(52.dp).clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.2f)),
-                contentAlignment = Alignment.Center
-            ) {
+            Box(modifier = Modifier.size(52.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center) {
                 Text(initials.ifBlank { "?" }, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
@@ -584,30 +527,22 @@ private fun DashboardHeader(displayName: String, role: UserRole) {
 }
 
 @Composable
-private fun SyncStatusCard(
-    connectionStatus: ConnectionStatus, lastSyncTimestamp: Long?, onRetry: () -> Unit
-) {
+private fun SyncStatusCard(connectionStatus: ConnectionStatus, lastSyncTimestamp: Long?, onRetry: () -> Unit) {
     val (backgroundColor, iconTint, icon, title, subtitle) = when (connectionStatus) {
-        is ConnectionStatus.Connected -> SyncCardData(DashColors.AccentMintBg, DashColors.AccentMint, Icons.Outlined.CloudDone, "Sincronizacion activa", lastSyncTimestamp?.let { "Ultima: ${formatTimestamp(it)}" } ?: "Datos actualizados")
+        is ConnectionStatus.Connected -> SyncCardData(DashColors.AccentMintBg, DashColors.AccentMint, Icons.Outlined.CloudDone, "Sincronizacion activa", lastSyncTimestamp?.let { "Ultima: ${formatTimestamp(it)}" } ?: "")
         is ConnectionStatus.Connecting -> SyncCardData(DashColors.WarningAmberBg, DashColors.WarningAmber, Icons.Outlined.CloudSync, "Conectando…", "Estableciendo canal seguro")
         is ConnectionStatus.Error -> SyncCardData(DashColors.ErrorRedBg, DashColors.ErrorRed, Icons.Outlined.CloudOff, "Sincronizacion no disponible", connectionStatus.hint)
         is ConnectionStatus.Disconnected -> SyncCardData(DashColors.WarningAmberBg, DashColors.WarningAmber, Icons.Outlined.CloudOff, "Sin conexion", "Los datos locales estan seguros")
     }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp),
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp),
         elevation = CardDefaults.cardElevation(6.dp),
-        colors = CardDefaults.cardColors(containerColor = DashColors.CardWhite)
-    ) {
+        colors = CardDefaults.cardColors(containerColor = DashColors.CardWhite)) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(backgroundColor),
-                contentAlignment = Alignment.Center
-            ) {
+            Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(backgroundColor),
+                contentAlignment = Alignment.Center) {
                 if (connectionStatus is ConnectionStatus.Connecting) {
                     val alpha by rememberInfiniteTransition("pulse").animateFloat(
-                        0.4f, 1f, infiniteRepeatable(tween(800), RepeatMode.Reverse), "pulseA"
-                    )
+                        0.4f, 1f, infiniteRepeatable(tween(800), RepeatMode.Reverse), "pulseA")
                     Icon(icon, null, Modifier.size(24.dp), tint = iconTint.copy(alpha = alpha))
                 } else {
                     Icon(icon, null, Modifier.size(24.dp), tint = iconTint)
@@ -628,20 +563,14 @@ private fun SyncStatusCard(
 }
 
 @Composable
-private fun MetricCard(
-    icon: ImageVector, label: String, value: String,
-    backgroundColor: Color, iconTint: Color, modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier.height(130.dp), shape = RoundedCornerShape(20.dp),
+private fun MetricCard(icon: ImageVector, label: String, value: String,
+                       backgroundColor: Color, iconTint: Color, modifier: Modifier = Modifier) {
+    Card(modifier = modifier.height(130.dp), shape = RoundedCornerShape(20.dp),
         elevation = CardDefaults.cardElevation(4.dp),
-        colors = CardDefaults.cardColors(containerColor = DashColors.CardWhite)
-    ) {
+        colors = CardDefaults.cardColors(containerColor = DashColors.CardWhite)) {
         Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
-            Box(
-                Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(backgroundColor),
-                contentAlignment = Alignment.Center
-            ) { Icon(icon, null, Modifier.size(22.dp), tint = iconTint) }
+            Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(backgroundColor),
+                contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(22.dp), tint = iconTint) }
             Column {
                 Text(value, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = DashColors.TextPrimary)
                 Text(label, fontSize = 11.sp, color = DashColors.TextSecondary, lineHeight = 14.sp)
@@ -651,20 +580,14 @@ private fun MetricCard(
 }
 
 @Composable
-private fun QuickActionCard(
-    icon: ImageVector, title: String, subtitle: String,
-    accentColor: Color, onClick: (() -> Unit)? = null
-) {
-    Card(
-        onClick = { onClick?.invoke() }, modifier = Modifier.fillMaxWidth(),
+private fun QuickActionCard(icon: ImageVector, title: String, subtitle: String,
+                            accentColor: Color, onClick: (() -> Unit)? = null) {
+    Card(onClick = { onClick?.invoke() }, modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(2.dp),
-        colors = CardDefaults.cardColors(containerColor = DashColors.CardWhite)
-    ) {
+        colors = CardDefaults.cardColors(containerColor = DashColors.CardWhite)) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(accentColor.copy(alpha = 0.1f)),
-                contentAlignment = Alignment.Center
-            ) { Icon(icon, null, Modifier.size(22.dp), tint = accentColor) }
+            Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(accentColor.copy(alpha = 0.1f)),
+                contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(22.dp), tint = accentColor) }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = DashColors.TextPrimary)
@@ -677,28 +600,27 @@ private fun QuickActionCard(
 
 @Composable
 private fun RecentActivityPlaceholder() {
-    Card(
-        Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(2.dp),
-        colors = CardDefaults.cardColors(containerColor = DashColors.CardWhite)
-    ) {
+        colors = CardDefaults.cardColors(containerColor = DashColors.CardWhite)) {
         Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Outlined.History, null, Modifier.size(36.dp), tint = DashColors.DividerLight)
             Spacer(Modifier.height(12.dp))
             Text("Sin actividad reciente", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = DashColors.TextSecondary)
-            Text("Las sincronizaciones con pacientes apareceran aqui", fontSize = 12.sp, color = DashColors.TextSecondary.copy(alpha = 0.7f), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
+            Text("Las sincronizaciones con pacientes apareceran aqui", fontSize = 12.sp,
+                color = DashColors.TextSecondary.copy(alpha = 0.7f), textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 4.dp))
         }
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// ══ COMPONENTE AÑADIDO: TARJETA DE ALERTA DE MEDICACIÓN ═════
-// ══════════════════════════════════════════════════════════════
 @Composable
 private fun AlertaMedicacionCard(
     pauta: com.alberto.medp2p_poc.data.model.PautaMedicaV2,
     onSuministrada: () -> Unit
 ) {
+    var showConfirmDialog by remember { mutableStateOf(false) }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -710,34 +632,22 @@ private fun AlertaMedicacionCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
                     .background(DashColors.WarningAmberBg),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    Icons.Outlined.Medication, null,
-                    Modifier.size(22.dp), tint = DashColors.WarningAmber
-                )
+                Icon(Icons.Outlined.Medication, null, Modifier.size(22.dp), tint = DashColors.WarningAmber)
             }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    text = pauta.medicacion,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = DashColors.TextPrimary
-                )
-                Text(
-                    text = "Dosis: ${pauta.dosis}  ·  ${pauta.frecuenciaDiaria}x/día",
-                    fontSize = 12.sp,
-                    color = DashColors.TextSecondary
-                )
+                Text(pauta.medicacion, fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold, color = DashColors.TextPrimary)
+                Text("Dosis: ${pauta.dosis}  ·  ${pauta.frecuenciaDiaria}x/día",
+                    fontSize = 12.sp, color = DashColors.TextSecondary)
             }
             Spacer(Modifier.width(8.dp))
             Button(
-                onClick = onSuministrada,
+                onClick = { showConfirmDialog = true },
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = DashColors.AccentMint)
@@ -745,6 +655,48 @@ private fun AlertaMedicacionCard(
                 Text("Suministrada", fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
         }
+    }
+
+    if (showConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDialog = false },
+            icon = {
+                Box(
+                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
+                        .background(DashColors.AccentMint.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Outlined.CheckCircle, null, Modifier.size(26.dp), tint = DashColors.AccentMint)
+                }
+            },
+            title = {
+                Text("Confirmar suministro", fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+            },
+            text = {
+                Text(
+                    "¿Marcar ${pauta.medicacion} como administrada hoy? " +
+                            "Esta accion quedara registrada en el historial del paciente.",
+                    fontSize = 14.sp, color = DashColors.TextSecondary,
+                    textAlign = TextAlign.Center, lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { onSuministrada(); showConfirmDialog = false },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = DashColors.AccentMint),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Si, registrar", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmDialog = false }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Cancelar", color = DashColors.TextSecondary)
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = DashColors.CardWhite
+        )
     }
 }
 
@@ -764,13 +716,14 @@ private fun formatTimestamp(timestamp: Long): String {
 private fun NuevaPautaBottomSheet(
     pacientes: List<com.alberto.medp2p_poc.data.model.Patient>,
     onDismiss: () -> Unit,
-    onConfirm: (patientPeerId: String, medicacion: String, dosis: String, frecuencia: Int) -> Unit
+    onConfirm: (patientPeerId: String, medicacion: String, dosis: String, frecuencia: Int, fechaInicio: Long, fechaFin: Long) -> Unit
 ) {
     var selectedPatient  by remember { mutableStateOf(pacientes.firstOrNull()) }
     var dropdownExpanded by remember { mutableStateOf(false) }
     var medicacion       by remember { mutableStateOf("") }
     var dosis            by remember { mutableStateOf("") }
     var frecuenciaText   by remember { mutableStateOf("1") }
+    var duracionDiasText by remember { mutableStateOf("") }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -786,7 +739,7 @@ private fun NuevaPautaBottomSheet(
         ) {
             Text("Nueva Pauta Medica", fontSize = 20.sp,
                 fontWeight = FontWeight.Bold, color = DashColors.TextPrimary)
-            Text("La pauta durara 7 dias desde hoy", fontSize = 12.sp, color = DashColors.TextSecondary)
+            Text("Introduce la duracion del tratamiento", fontSize = 12.sp, color = DashColors.TextSecondary)
 
             ExposedDropdownMenuBox(
                 expanded = dropdownExpanded,
@@ -801,10 +754,7 @@ private fun NuevaPautaBottomSheet(
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth().menuAnchor()
                 )
-                ExposedDropdownMenu(
-                    expanded = dropdownExpanded,
-                    onDismissRequest = { dropdownExpanded = false }
-                ) {
+                ExposedDropdownMenu(expanded = dropdownExpanded, onDismissRequest = { dropdownExpanded = false }) {
                     pacientes.forEach { patient ->
                         DropdownMenuItem(
                             text = { Text(patient.fullName) },
@@ -834,12 +784,32 @@ private fun NuevaPautaBottomSheet(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            val frecuencia = frecuenciaText.toIntOrNull() ?: 0
-            val formValid  = selectedPatient != null && medicacion.isNotBlank()
-                    && dosis.isNotBlank() && frecuencia > 0
+            OutlinedTextField(
+                value = duracionDiasText,
+                onValueChange = { if (it.all(Char::isDigit) && it.length <= 3) duracionDiasText = it },
+                label = { Text("Duracion del tratamiento (dias)") },
+                placeholder = { Text("Ej: 7, 14, 30") },
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            val frecuencia   = frecuenciaText.toIntOrNull() ?: 0
+            val duracionDias = duracionDiasText.toIntOrNull() ?: 0
+            val formValid    = selectedPatient != null && medicacion.isNotBlank()
+                    && dosis.isNotBlank() && frecuencia > 0 && duracionDias > 0
 
             Button(
-                onClick = { if (formValid) onConfirm(selectedPatient!!.peerId, medicacion, dosis, frecuencia) },
+                onClick = {
+                    if (formValid) {
+                        val fechaInicio = System.currentTimeMillis()
+                        val fechaFin    = fechaInicio + (duracionDias * 86_400_000L)
+                        onConfirm(selectedPatient!!.peerId, medicacion, dosis, frecuencia, fechaInicio, fechaFin)
+                    }
+                },
                 enabled  = formValid,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape    = RoundedCornerShape(16.dp),
@@ -851,4 +821,5 @@ private fun NuevaPautaBottomSheet(
             }
         }
     }
+}
 }

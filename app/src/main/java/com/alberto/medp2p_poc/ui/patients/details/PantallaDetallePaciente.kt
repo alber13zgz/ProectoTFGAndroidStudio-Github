@@ -34,19 +34,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-// ══════════════════════════════════════════════════════════════════════
-// JUSTIFICACIÓN ARQUITECTÓNICA:
-// PantallaDetallePaciente usa HorizontalPager + TabRow de MD3 para
-// las 3 pestañas clínicas. Recibe dashboardViewModel para que el
-// botón "Guardar nota" pueda disparar el envío P2P sin que la UI
-// sepa nada de la infraestructura de red — solo invoca el callback
-// onAddNote con el texto, y el ViewModel construye la dirección
-// Circuit Relay y llama a P2PMessagingService de forma transparente.
-// ══════════════════════════════════════════════════════════════════════
-
-// Constante de red: dirección base del Relay en AWS.
-// Se define aquí para construir la dirección Circuit Relay completa
-// en el callback onAddNote sin acoplar la UI a P2PMessagingService.
 private const val RELAY_BASE_ADDR =
     "/ip4/13.48.59.216/tcp/4001/p2p/12D3KooWEBiChhAXXnZRPoM37aoawZbYQKp7WxqtC7LrfZFab4TV"
 
@@ -75,15 +62,11 @@ private object DetailColors {
     )
 }
 
-// ══════════════════════════════════════════════════════════════
-// ══ PANTALLA PRINCIPAL ═══════════════════════════════════════
-// ══════════════════════════════════════════════════════════════
-
 @Composable
 fun PantallaDetallePaciente(
     peerId: String,
     viewModel: PatientDetailViewModel,
-    dashboardViewModel: DashboardViewModel,   // ← NUEVO: necesario para envío P2P
+    dashboardViewModel: DashboardViewModel,
     onBack: () -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -91,36 +74,21 @@ fun PantallaDetallePaciente(
     LaunchedEffect(peerId) { viewModel.loadPatientDetail(peerId, dashboardViewModel.currentOwnerPeerId) }
     when {
         state.isLoading -> {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(DetailColors.SurfaceWhite),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(
-                    color = DetailColors.PrimaryBlue,
-                    strokeWidth = 3.dp
-                )
+            Box(modifier = Modifier.fillMaxSize().background(DetailColors.SurfaceWhite),
+                contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = DetailColors.PrimaryBlue, strokeWidth = 3.dp)
             }
         }
-
         state.errorMessage != null -> {
             ErrorState(message = state.errorMessage!!, onBack = onBack)
         }
-
         state.patient != null -> {
             PatientDetailContent(
-                patient     = state.patient!!,
-                medications = state.activeMedications,
-                history     = state.medicalHistory,
-                onBack      = onBack,
-                // ── CAMBIO CLAVE: construir dirección Circuit Relay y enviar por P2P ──
-                // JUSTIFICACIÓN (Opción B):
-                // La dirección se construye dinámicamente concatenando la dirección
-                // estable del Relay (constante en compilación) con el peerId del
-                // paciente (almacenado en SQLite durante la vinculación previa).
-                // El Profesional no introduce ningún dato de red manualmente,
-                // eliminando errores humanos y mejorando la UX.
+                patient       = state.patient!!,
+                medications   = state.activeMedications,
+                pautasActivas = state.pautasActivas,
+                history       = state.medicalHistory,
+                onBack        = onBack,
                 onAddNote = { nota ->
                     val destinationAddr = "$RELAY_BASE_ADDR/p2p-circuit/p2p/$peerId"
                     viewModel.addClinicalNote(
@@ -138,15 +106,12 @@ fun PantallaDetallePaciente(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// ══ CONTENIDO CON CABECERA + PESTANAS ═══════════════════════
-// ══════════════════════════════════════════════════════════════
-
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun PatientDetailContent(
     patient: Patient,
     medications: List<ActiveMedication>,
+    pautasActivas: List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>,
     history: List<MedicalRecord>,
     onBack: () -> Unit,
     onAddNote: (String) -> Unit,
@@ -160,11 +125,7 @@ private fun PatientDetailContent(
     val pagerState    = rememberPagerState(pageCount = { tabs.size })
     val coroutineScope = rememberCoroutineScope()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DetailColors.SurfaceWhite)
-    ) {
+    Column(modifier = Modifier.fillMaxSize().background(DetailColors.SurfaceWhite)) {
         PatientDetailHeader(patient = patient, onBack = onBack)
 
         TabRow(
@@ -174,48 +135,28 @@ private fun PatientDetailContent(
             indicator = { tabPositions ->
                 if (pagerState.currentPage < tabPositions.size) {
                     val pos = tabPositions[pagerState.currentPage]
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .wrapContentSize(Alignment.BottomStart)
-                            .offset(x = pos.left)
-                            .width(pos.width)
-                            .height(3.dp)
-                            .background(
-                                color = DetailColors.PrimaryBlue,
-                                shape = RoundedCornerShape(topStart = 2.dp, topEnd = 2.dp)
-                            )
-                    )
+                    Box(Modifier.fillMaxWidth().wrapContentSize(Alignment.BottomStart)
+                        .offset(x = pos.left).width(pos.width).height(3.dp)
+                        .background(color = DetailColors.PrimaryBlue,
+                            shape = RoundedCornerShape(topStart = 2.dp, topEnd = 2.dp)))
                 }
             },
-            divider = {
-                HorizontalDivider(color = DetailColors.DividerLight, thickness = 1.dp)
-            }
+            divider = { HorizontalDivider(color = DetailColors.DividerLight, thickness = 1.dp) }
         ) {
             tabs.forEachIndexed { index, tab ->
                 val selected = pagerState.currentPage == index
                 Tab(
                     selected = selected,
-                    onClick  = {
-                        coroutineScope.launch { pagerState.animateScrollToPage(index) }
-                    },
+                    onClick  = { coroutineScope.launch { pagerState.animateScrollToPage(index) } },
                     text = {
-                        Text(
-                            text       = tab.title,
-                            fontSize   = 13.sp,
+                        Text(text = tab.title, fontSize = 13.sp,
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                            color      = if (selected) DetailColors.PrimaryBlue
-                            else DetailColors.TextSecondary
-                        )
+                            color = if (selected) DetailColors.PrimaryBlue else DetailColors.TextSecondary)
                     },
                     icon = {
-                        Icon(
-                            imageVector     = tab.icon,
-                            contentDescription = tab.title,
-                            modifier        = Modifier.size(18.dp),
-                            tint            = if (selected) DetailColors.PrimaryBlue
-                            else DetailColors.TextSecondary
-                        )
+                        Icon(imageVector = tab.icon, contentDescription = tab.title,
+                            modifier = Modifier.size(18.dp),
+                            tint = if (selected) DetailColors.PrimaryBlue else DetailColors.TextSecondary)
                     }
                 )
             }
@@ -224,16 +165,12 @@ private fun PatientDetailContent(
         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
             when (page) {
                 0 -> TabDatosPersonales(patient = patient)
-                1 -> TabMedicaciones(medications = medications)
+                1 -> TabMedicaciones(medications = medications, pautasActivas = pautasActivas)
                 2 -> TabHistorial(history = history, onAddNote = onAddNote)
             }
         }
     }
 }
-
-// ══════════════════════════════════════════════════════════════
-// ══ CABECERA DEL PACIENTE ═══════════════════════════════════
-// ══════════════════════════════════════════════════════════════
 
 @Composable
 private fun PatientDetailHeader(patient: Patient, onBack: () -> Unit) {
@@ -241,80 +178,39 @@ private fun PatientDetailHeader(patient: Patient, onBack: () -> Unit) {
         patient.avatarColorIndex.coerceIn(0, DetailColors.AvatarPalette.lastIndex)
     ]
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    listOf(DetailColors.PrimaryBlue, DetailColors.PrimaryBlueDark)
-                )
-            )
+        modifier = Modifier.fillMaxWidth()
+            .background(Brush.verticalGradient(listOf(DetailColors.PrimaryBlue, DetailColors.PrimaryBlueDark)))
             .padding(start = 8.dp, end = 20.dp, top = 8.dp, bottom = 20.dp)
     ) {
         Column {
             IconButton(onClick = onBack) {
                 Icon(Icons.Outlined.ArrowBack, contentDescription = "Volver", tint = Color.White)
             }
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(modifier = Modifier.fillMaxWidth().padding(start = 12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.linearGradient(
-                                listOf(avatarColor, avatarColor.copy(alpha = 0.7f))
-                            )
-                        ),
+                    modifier = Modifier.size(64.dp).clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(avatarColor, avatarColor.copy(alpha = 0.7f)))),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text       = patient.initials,
-                        fontSize   = 26.sp,
-                        fontWeight = FontWeight.Bold,
-                        color      = Color.White
-                    )
+                    Text(text = patient.initials, fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 }
                 Spacer(Modifier.width(16.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text       = patient.fullName,
-                        fontSize   = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        color      = Color.White,
-                        maxLines   = 2,
-                        overflow   = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text     = "Vinculado el ${formatDate(patient.linkedAt)}",
-                        fontSize = 12.sp,
-                        color    = Color.White.copy(alpha = 0.7f)
-                    )
+                    Text(text = patient.fullName, fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                        color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(text = "Vinculado el ${formatDate(patient.linkedAt)}", fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.7f))
                     if (patient.allergies.isNotBlank()) {
                         Spacer(Modifier.height(6.dp))
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = DetailColors.ErrorRed.copy(alpha = 0.2f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Outlined.Warning,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(13.dp),
-                                    tint = Color.White
-                                )
+                        Surface(shape = RoundedCornerShape(8.dp), color = DetailColors.ErrorRed.copy(alpha = 0.2f)) {
+                            Row(modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.Warning, contentDescription = null,
+                                    modifier = Modifier.size(13.dp), tint = Color.White)
                                 Spacer(Modifier.width(4.dp))
-                                Text(
-                                    text     = patient.allergies,
-                                    fontSize = 11.sp,
-                                    color    = Color.White,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Text(text = patient.allergies, fontSize = 11.sp, color = Color.White,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
@@ -324,117 +220,64 @@ private fun PatientDetailHeader(patient: Patient, onBack: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// ══ PESTANA 1: DATOS PERSONALES ═════════════════════════════
-// ══════════════════════════════════════════════════════════════
-
 @Composable
 private fun TabDatosPersonales(patient: Patient) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { Text(text = "Informacion del paciente", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DetailColors.TextPrimary) }
+        item { InfoCard(icon = Icons.Outlined.Person, label = "Nombre completo", value = patient.fullName, iconBg = DetailColors.BlueBg, iconTint = DetailColors.PrimaryBlue) }
         item {
-            Text(
-                text       = "Informacion del paciente",
-                fontSize   = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color      = DetailColors.TextPrimary
-            )
+            InfoCard(icon = Icons.Outlined.Warning, label = "Alergias conocidas",
+                value = patient.allergies.ifBlank { "Sin alergias registradas" },
+                iconBg = if (patient.allergies.isNotBlank()) DetailColors.WarningAmberBg else DetailColors.AccentMintBg,
+                iconTint = if (patient.allergies.isNotBlank()) DetailColors.WarningAmber else DetailColors.AccentMint)
         }
+        item { InfoCard(icon = Icons.Outlined.Notes, label = "Notas clinicas", value = patient.notes.ifBlank { "Sin notas adicionales" }, iconBg = DetailColors.PurpleBg, iconTint = DetailColors.Purple) }
+        item { InfoCard(icon = Icons.Outlined.CalendarToday, label = "Fecha de vinculacion", value = formatDate(patient.linkedAt), iconBg = DetailColors.BlueBg, iconTint = DetailColors.PrimaryBlue) }
         item {
-            InfoCard(
-                icon    = Icons.Outlined.Person,
-                label   = "Nombre completo",
-                value   = patient.fullName,
-                iconBg  = DetailColors.BlueBg,
-                iconTint = DetailColors.PrimaryBlue
-            )
-        }
-        item {
-            InfoCard(
-                icon    = Icons.Outlined.Warning,
-                label   = "Alergias conocidas",
-                value   = patient.allergies.ifBlank { "Sin alergias registradas" },
-                iconBg  = if (patient.allergies.isNotBlank()) DetailColors.WarningAmberBg
-                else DetailColors.AccentMintBg,
-                iconTint = if (patient.allergies.isNotBlank()) DetailColors.WarningAmber
-                else DetailColors.AccentMint
-            )
-        }
-        item {
-            InfoCard(
-                icon    = Icons.Outlined.Notes,
-                label   = "Notas clinicas",
-                value   = patient.notes.ifBlank { "Sin notas adicionales" },
-                iconBg  = DetailColors.PurpleBg,
-                iconTint = DetailColors.Purple
-            )
-        }
-        item {
-            InfoCard(
-                icon    = Icons.Outlined.CalendarToday,
-                label   = "Fecha de vinculacion",
-                value   = formatDate(patient.linkedAt),
-                iconBg  = DetailColors.BlueBg,
-                iconTint = DetailColors.PrimaryBlue
-            )
-        }
-        item {
-            InfoCard(
-                icon    = Icons.Outlined.Sync,
-                label   = "Ultima sincronizacion",
-                value   = patient.lastSyncAt?.let { formatDateTime(it) }
-                    ?: "Pendiente de primera sincronizacion",
-                iconBg  = DetailColors.AccentMintBg,
-                iconTint = DetailColors.AccentMint
-            )
+            InfoCard(icon = Icons.Outlined.Sync, label = "Ultima sincronizacion",
+                value = patient.lastSyncAt?.let { formatDateTime(it) } ?: "Pendiente de primera sincronizacion",
+                iconBg = DetailColors.AccentMintBg, iconTint = DetailColors.AccentMint)
         }
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// ══ PESTANA 2: MEDICACIONES ACTIVAS ═════════════════════════
-// ══════════════════════════════════════════════════════════════
-
 @Composable
-private fun TabMedicaciones(medications: List<ActiveMedication>) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
+private fun TabMedicaciones(
+    medications: List<ActiveMedication>,
+    pautasActivas: List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>
+) {
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text       = "Medicacion activa",
-                    fontSize   = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color      = DetailColors.TextPrimary
-                )
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(text = "Medicacion activa", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DetailColors.TextPrimary)
                 Surface(shape = RoundedCornerShape(8.dp), color = DetailColors.BlueBg) {
-                    Text(
-                        text       = "${medications.size} pautas",
-                        fontSize   = 12.sp,
-                        color      = DetailColors.PrimaryBlue,
+                    Text(text = "${medications.size} pautas", fontSize = 12.sp, color = DetailColors.PrimaryBlue,
                         fontWeight = FontWeight.SemiBold,
-                        modifier   = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
                 }
             }
         }
+
+        if (pautasActivas.isNotEmpty()) {
+            item {
+                Spacer(Modifier.height(4.dp))
+                Text("Medicacion actual (pautas activas)", fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold, color = DetailColors.TextPrimary)
+            }
+            items(pautasActivas) { pauta -> PautaActivaCard(pauta = pauta) }
+            item {
+                HorizontalDivider(color = DetailColors.DividerLight, modifier = Modifier.padding(vertical = 8.dp))
+            }
+        }
+
         if (medications.isEmpty()) {
             item {
-                EmptyTabState(
-                    icon    = Icons.Outlined.MedicalServices,
+                EmptyTabState(icon = Icons.Outlined.MedicalServices,
                     message = "Sin medicacion activa",
-                    hint    = "Las pautas medicas asignadas apareceran aqui"
-                )
+                    hint = "Las pautas medicas asignadas apareceran aqui")
             }
         } else {
             items(medications) { med -> MedicationCard(activeMed = med) }
@@ -450,110 +293,48 @@ private fun MedicationCard(activeMed: ActiveMedication) {
         med.stockActual <= 5 -> DetailColors.WarningAmber
         else                 -> DetailColors.AccentMint
     }
-    Card(
-        modifier  = Modifier.fillMaxWidth(),
-        shape     = RoundedCornerShape(16.dp),
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        colors    = CardDefaults.cardColors(containerColor = DetailColors.CardWhite)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(DetailColors.BlueBg),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Outlined.Medication,
-                    contentDescription = null,
-                    modifier = Modifier.size(24.dp),
-                    tint     = DetailColors.PrimaryBlue
-                )
+        colors = CardDefaults.cardColors(containerColor = DetailColors.CardWhite)) {
+        Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(DetailColors.BlueBg),
+                contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.Medication, contentDescription = null, modifier = Modifier.size(24.dp), tint = DetailColors.PrimaryBlue)
             }
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text       = med.nombreComercial,
-                    fontSize   = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color      = DetailColors.TextPrimary
-                )
-                Text(
-                    text     = "${med.principleActivo} - ${med.concentracionMg}mg",
-                    fontSize = 12.sp,
-                    color    = DetailColors.TextSecondary
-                )
+                Text(text = med.nombreComercial, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = DetailColors.TextPrimary)
+                Text(text = "${med.principleActivo} - ${med.concentracionMg}mg", fontSize = 12.sp, color = DetailColors.TextSecondary)
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Outlined.Schedule,
-                        contentDescription = null,
-                        modifier = Modifier.size(13.dp),
-                        tint     = DetailColors.Purple
-                    )
+                    Icon(Icons.Outlined.Schedule, contentDescription = null, modifier = Modifier.size(13.dp), tint = DetailColors.Purple)
                     Spacer(Modifier.width(4.dp))
-                    Text(
-                        text       = activeMed.nextDoseLabel,
-                        fontSize   = 12.sp,
-                        color      = DetailColors.Purple,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Text(text = activeMed.nextDoseLabel, fontSize = 12.sp, color = DetailColors.Purple, fontWeight = FontWeight.Medium)
                 }
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text       = "${med.stockActual}",
-                    fontSize   = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color      = stockColor
-                )
+                Text(text = "${med.stockActual}", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = stockColor)
                 Text(text = "stock", fontSize = 10.sp, color = DetailColors.TextSecondary)
             }
         }
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// ══ PESTANA 3: HISTORIAL MEDICO ═════════════════════════════
-// ══════════════════════════════════════════════════════════════
-
 @Composable
-private fun TabHistorial(
-    history: List<MedicalRecord>,
-    onAddNote: (String) -> Unit
-) {
+private fun TabHistorial(history: List<MedicalRecord>, onAddNote: (String) -> Unit) {
     var noteInput   by remember { mutableStateOf("") }
     var showAddNote by remember { mutableStateOf(false) }
 
-    LazyColumn(
-        modifier        = Modifier.fillMaxSize(),
-        contentPadding  = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text       = "Historial clinico",
-                    fontSize   = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color      = DetailColors.TextPrimary
-                )
-                FilledTonalButton(
-                    onClick = { showAddNote = !showAddNote },
-                    shape   = RoundedCornerShape(12.dp),
-                    colors  = ButtonDefaults.filledTonalButtonColors(
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(text = "Historial clinico", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DetailColors.TextPrimary)
+                FilledTonalButton(onClick = { showAddNote = !showAddNote }, shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
                         containerColor = DetailColors.PrimaryBlue.copy(alpha = 0.1f),
-                        contentColor   = DetailColors.PrimaryBlue
-                    )
-                ) {
+                        contentColor   = DetailColors.PrimaryBlue)) {
                     Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Nota", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -563,53 +344,29 @@ private fun TabHistorial(
 
         if (showAddNote) {
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape    = RoundedCornerShape(16.dp),
-                    colors   = CardDefaults.cardColors(
-                        containerColor = DetailColors.PrimaryBlue.copy(alpha = 0.04f)
-                    )
-                ) {
+                Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = DetailColors.PrimaryBlue.copy(alpha = 0.04f))) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         OutlinedTextField(
-                            value         = noteInput,
-                            onValueChange = { noteInput = it },
-                            label         = { Text("Nueva nota clinica") },
-                            placeholder   = { Text("Ej: Paciente refiere mejoria...") },
-                            modifier      = Modifier.fillMaxWidth(),
-                            shape         = RoundedCornerShape(12.dp),
-                            minLines      = 2,
-                            maxLines      = 4,
-                            colors        = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor   = DetailColors.PrimaryBlue,
+                            value = noteInput, onValueChange = { noteInput = it },
+                            label = { Text("Nueva nota clinica") },
+                            placeholder = { Text("Ej: Paciente refiere mejoria...") },
+                            modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
+                            minLines = 2, maxLines = 4,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = DetailColors.PrimaryBlue,
                                 unfocusedBorderColor = DetailColors.DividerLight,
-                                cursorColor          = DetailColors.PrimaryBlue
-                            )
-                        )
+                                cursorColor = DetailColors.PrimaryBlue))
                         Spacer(Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment     = Alignment.CenterVertically
-                        ) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically) {
                             TextButton(onClick = { showAddNote = false; noteInput = "" }) {
                                 Text("Cancelar", color = DetailColors.TextSecondary)
                             }
                             Spacer(Modifier.width(8.dp))
-                            Button(
-                                onClick = {
-                                    // onAddNote ya construye la dirección Circuit Relay
-                                    // y llama a P2PMessagingService internamente.
-                                    onAddNote(noteInput)
-                                    noteInput   = ""
-                                    showAddNote = false
-                                },
-                                enabled = noteInput.isNotBlank(),
-                                shape   = RoundedCornerShape(12.dp),
-                                colors  = ButtonDefaults.buttonColors(
-                                    containerColor = DetailColors.PrimaryBlue
-                                )
-                            ) {
+                            Button(onClick = { onAddNote(noteInput); noteInput = ""; showAddNote = false },
+                                enabled = noteInput.isNotBlank(), shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = DetailColors.PrimaryBlue)) {
                                 Text("Guardar nota", fontWeight = FontWeight.Bold)
                             }
                         }
@@ -619,13 +376,7 @@ private fun TabHistorial(
         }
 
         if (history.isEmpty()) {
-            item {
-                EmptyTabState(
-                    icon    = Icons.Outlined.Description,
-                    message = "Sin registros clinicos",
-                    hint    = "Las notas y sincronizaciones apareceran aqui"
-                )
-            }
+            item { EmptyTabState(icon = Icons.Outlined.Description, message = "Sin registros clinicos", hint = "Las notas y sincronizaciones apareceran aqui") }
         } else {
             items(history.reversed()) { record -> HistoryNoteCard(record = record) }
         }
@@ -638,87 +389,41 @@ private fun HistoryNoteCard(record: MedicalRecord) {
     val accentColor = if (isMine) DetailColors.PrimaryBlue else DetailColors.AccentMint
     val authorLabel = if (isMine) "Tu" else record.senderAlias.ifBlank { "Paciente" }
 
-    Card(
-        modifier  = Modifier.fillMaxWidth(),
-        shape     = RoundedCornerShape(16.dp),
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        colors    = CardDefaults.cardColors(containerColor = DetailColors.CardWhite)
-    ) {
+        colors = CardDefaults.cardColors(containerColor = DetailColors.CardWhite)) {
         Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment     = Alignment.CenterVertically
-            ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(accentColor)
-                    )
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(accentColor))
                     Spacer(Modifier.width(8.dp))
-                    Text(
-                        text       = authorLabel,
-                        fontSize   = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color      = accentColor
-                    )
+                    Text(text = authorLabel, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = accentColor)
                 }
-                Text(
-                    text     = formatDateTime(record.timestamp),
-                    fontSize = 11.sp,
-                    color    = DetailColors.TextSecondary
-                )
+                Text(text = formatDateTime(record.timestamp), fontSize = 11.sp, color = DetailColors.TextSecondary)
             }
             Spacer(Modifier.height(8.dp))
-            Text(
-                text       = record.text,
-                fontSize   = 14.sp,
-                color      = DetailColors.TextPrimary,
-                lineHeight = 20.sp
-            )
+            Text(text = record.text, fontSize = 14.sp, color = DetailColors.TextPrimary, lineHeight = 20.sp)
         }
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// ══ COMPONENTES COMPARTIDOS ═════════════════════════════════
-// ══════════════════════════════════════════════════════════════
-
 private data class TabInfo(val title: String, val icon: ImageVector)
 
 @Composable
-private fun InfoCard(
-    icon: ImageVector, label: String, value: String,
-    iconBg: Color, iconTint: Color
-) {
-    Card(
-        modifier  = Modifier.fillMaxWidth(),
-        shape     = RoundedCornerShape(16.dp),
+private fun InfoCard(icon: ImageVector, label: String, value: String, iconBg: Color, iconTint: Color) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        colors    = CardDefaults.cardColors(containerColor = DetailColors.CardWhite)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(iconBg),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(imageVector = icon, contentDescription = null,
-                    modifier = Modifier.size(22.dp), tint = iconTint)
+        colors = CardDefaults.cardColors(containerColor = DetailColors.CardWhite)) {
+        Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(iconBg),
+                contentAlignment = Alignment.Center) {
+                Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(22.dp), tint = iconTint)
             }
             Spacer(Modifier.width(14.dp))
             Column {
-                Text(text = label, fontSize = 11.sp,
-                    color = DetailColors.TextSecondary, fontWeight = FontWeight.Medium)
-                Text(text = value, fontSize = 15.sp,
-                    color = DetailColors.TextPrimary, fontWeight = FontWeight.Medium,
+                Text(text = label, fontSize = 11.sp, color = DetailColors.TextSecondary, fontWeight = FontWeight.Medium)
+                Text(text = value, fontSize = 15.sp, color = DetailColors.TextPrimary, fontWeight = FontWeight.Medium,
                     modifier = Modifier.padding(top = 2.dp))
             }
         }
@@ -727,52 +432,63 @@ private fun InfoCard(
 
 @Composable
 private fun EmptyTabState(icon: ImageVector, message: String, hint: String) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape    = RoundedCornerShape(16.dp),
-        colors   = CardDefaults.cardColors(containerColor = DetailColors.CardWhite)
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(40.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Icon(imageVector = icon, contentDescription = null,
-                modifier = Modifier.size(40.dp), tint = DetailColors.DividerLight)
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = DetailColors.CardWhite)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(40.dp), tint = DetailColors.DividerLight)
             Spacer(Modifier.height(12.dp))
-            Text(text = message, fontSize = 15.sp,
-                fontWeight = FontWeight.Medium, color = DetailColors.TextSecondary)
-            Text(text = hint, fontSize = 12.sp,
-                color = DetailColors.TextSecondary.copy(alpha = 0.7f),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 4.dp))
+            Text(text = message, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = DetailColors.TextSecondary)
+            Text(text = hint, fontSize = 12.sp, color = DetailColors.TextSecondary.copy(alpha = 0.7f),
+                textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
         }
     }
 }
 
 @Composable
 private fun ErrorState(message: String, onBack: () -> Unit) {
-    Box(
-        modifier = Modifier.fillMaxSize().background(DetailColors.SurfaceWhite),
-        contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = Modifier.fillMaxSize().background(DetailColors.SurfaceWhite), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Outlined.ErrorOutline, contentDescription = null,
-                modifier = Modifier.size(48.dp), tint = DetailColors.ErrorRed)
+            Icon(Icons.Outlined.ErrorOutline, contentDescription = null, modifier = Modifier.size(48.dp), tint = DetailColors.ErrorRed)
             Spacer(Modifier.height(16.dp))
             Text(text = message, fontSize = 16.sp, color = DetailColors.TextPrimary)
             Spacer(Modifier.height(16.dp))
-            Button(
-                onClick = onBack,
-                shape   = RoundedCornerShape(12.dp),
-                colors  = ButtonDefaults.buttonColors(containerColor = DetailColors.PrimaryBlue)
-            ) { Text("Volver") }
+            Button(onClick = onBack, shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = DetailColors.PrimaryBlue)) { Text("Volver") }
         }
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// ══ UTILIDADES ═══════════════════════════════════════════════
-// ══════════════════════════════════════════════════════════════
+@Composable
+private fun PautaActivaCard(pauta: com.alberto.medp2p_poc.data.model.PautaMedicaV2) {
+    val diasRestantes = ((pauta.fechaFin - System.currentTimeMillis()) / 86_400_000L).coerceAtLeast(0)
+    val urgencyColor  = when {
+        diasRestantes <= 2  -> DetailColors.ErrorRed
+        diasRestantes <= 7  -> DetailColors.WarningAmber
+        else                -> DetailColors.AccentMint
+    }
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(2.dp),
+        colors = CardDefaults.cardColors(containerColor = DetailColors.CardWhite)) {
+        Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
+                .background(urgencyColor.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.Medication, null, Modifier.size(22.dp), tint = urgencyColor)
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(pauta.medicacion, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = DetailColors.TextPrimary)
+                Text("${pauta.dosis}  ·  ${pauta.frecuenciaDiaria}x/día", fontSize = 12.sp, color = DetailColors.TextSecondary)
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.CalendarToday, null, Modifier.size(12.dp), tint = urgencyColor)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Hasta el ${formatDate(pauta.fechaFin)}  ·  $diasRestantes días restantes",
+                        fontSize = 11.sp, color = urgencyColor, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+    }
+}
 
 private fun formatDate(timestamp: Long): String =
     SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(timestamp))

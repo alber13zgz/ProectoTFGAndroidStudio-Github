@@ -789,4 +789,46 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             db.close()
         }
     }
+    fun obtenerPautasActivasPorPaciente(
+        patientPeerId: String,
+        ownerPeerId: String
+    ): List<com.alberto.medp2p_poc.data.model.PautaMedicaV2> {
+        val lista = mutableListOf<com.alberto.medp2p_poc.data.model.PautaMedicaV2>()
+        val db    = this.readableDatabase
+        val ahora = System.currentTimeMillis()
+
+        val cursor = db.rawQuery("""
+        SELECT p.id, p.patientPeerId, p.doctorCreatorPeerId,
+               p.medicacion, p.dosis, p.frecuenciaDiaria, p.fechaInicio, p.fechaFin
+        FROM pauta_medica_v2 p
+        INNER JOIN paciente_clinico pc
+            ON pc.peerId = p.patientPeerId
+            AND pc.ownerPeerId = ?
+        WHERE p.patientPeerId = ?
+          AND p.fechaFin >= ?
+        ORDER BY p.fechaFin ASC
+    """.trimIndent(),
+            arrayOf(ownerPeerId, patientPeerId, ahora.toString())
+        )
+        try {
+            if (cursor.moveToFirst()) {
+                do {
+                    lista.add(com.alberto.medp2p_poc.data.model.PautaMedicaV2(
+                        id                  = cursor.getString(0),
+                        patientPeerId       = cursor.getString(1),
+                        doctorCreatorPeerId = cursor.getString(2),
+                        medicacion          = cursor.getString(3),
+                        dosis               = cursor.getString(4),
+                        frecuenciaDiaria    = cursor.getInt(5),
+                        fechaInicio         = cursor.getLong(6),
+                        fechaFin            = cursor.getLong(7)
+                    ))
+                } while (cursor.moveToNext())
+            }
+        } finally {
+            cursor.close()
+            db.close()
+        }
+        return lista
+    }
 }

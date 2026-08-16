@@ -71,6 +71,7 @@ fun PantallaDashboardClinico(
     onNavigateToProfile: () -> Unit = {}
 ) {
     val data by viewModel.dashboard.collectAsStateWithLifecycle()
+
     val alertas by viewModel.alertasPendientes.collectAsStateWithLifecycle()
 
     var showLinkSheet by remember { mutableStateOf(false) }
@@ -138,6 +139,38 @@ fun PantallaDashboardClinico(
 
             Spacer(modifier = Modifier.height(20.dp))
 
+            if (alertas.isNotEmpty()) {
+                Text(
+                    text = "Alertas de Medicacion (Hoy)",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = DashColors.TextPrimary,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+                alertas.forEach { pauta ->
+                    AlertaMedicacionCard(
+                        pauta = pauta,
+                        onSuministrada = { viewModel.registrarSuministro(pauta.id, pauta.patientPeerId) }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                Spacer(Modifier.height(4.dp))
+            } else {
+                Card(
+                    Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                    elevation = CardDefaults.cardElevation(2.dp),
+                    colors = CardDefaults.cardColors(containerColor = DashColors.CardWhite)
+                ) {
+                    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.CheckCircle, null, Modifier.size(24.dp), tint = DashColors.AccentMint)
+                        Spacer(Modifier.width(12.dp))
+                        Text("No hay medicacion pendiente para hoy",
+                            fontSize = 14.sp, color = DashColors.TextSecondary)
+                    }
+                }
+                Spacer(Modifier.height(20.dp))
+            }
+
             Text(
                 text = "Acciones rapidas",
                 fontSize = 18.sp,
@@ -172,25 +205,7 @@ fun PantallaDashboardClinico(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            if (alertas.isNotEmpty()) {
-                Text(
-                    text = "Alertas de Medicacion (Hoy)",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = DashColors.TextPrimary,
-                    modifier = Modifier.padding(bottom = 12.dp)
-                )
-                alertas.forEach { pauta ->
-                    AlertaMedicacionCard(
-                        pauta = pauta,
-                        onSuministrada = {
-                            viewModel.registrarSuministro(pauta.id, pauta.patientPeerId)
-                        }
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-                Spacer(Modifier.height(12.dp))
-            }
+
 
             Text(
                 text = "Actividad reciente",
@@ -356,6 +371,7 @@ fun PantallaDashboardClinico(
             containerColor = DashColors.CardWhite
         )
     }
+}
 @Composable
 private fun LinkOptionCard(
     icon: ImageVector,
@@ -666,7 +682,8 @@ private fun AlertaMedicacionCard(
                         .background(DashColors.AccentMint.copy(alpha = 0.15f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Outlined.CheckCircle, null, Modifier.size(26.dp), tint = DashColors.AccentMint)
+                    Icon(Icons.Outlined.CheckCircle, null,
+                        Modifier.size(26.dp), tint = DashColors.AccentMint)
                 }
             },
             title = {
@@ -690,16 +707,16 @@ private fun AlertaMedicacionCard(
                 ) { Text("Si, registrar", fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
-                TextButton(onClick = { showConfirmDialog = false }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Cancelar", color = DashColors.TextSecondary)
-                }
+                TextButton(
+                    onClick = { showConfirmDialog = false },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Cancelar", color = DashColors.TextSecondary) }
             },
             shape = RoundedCornerShape(24.dp),
             containerColor = DashColors.CardWhite
         )
     }
 }
-
 private data class SyncCardData(val bg: Color, val tint: Color, val icon: ImageVector, val title: String, val subtitle: String)
 
 private fun saludoSegunHora(): String {
@@ -821,5 +838,4 @@ private fun NuevaPautaBottomSheet(
             }
         }
     }
-}
 }

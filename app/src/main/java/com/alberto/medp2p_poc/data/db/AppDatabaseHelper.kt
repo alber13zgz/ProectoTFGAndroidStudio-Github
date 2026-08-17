@@ -150,7 +150,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 linkedAt INTEGER NOT NULL,
                 lastSyncAt INTEGER,
                 isFavorite INTEGER NOT NULL DEFAULT 0,
-                avatarColorIndex INTEGER NOT NULL DEFAULT 0
+                avatarColorIndex INTEGER NOT NULL DEFAULT 0,
+                photoUri TEXT NOT NULL DEFAULT ''
             )
         """.trimIndent())
 
@@ -356,13 +357,13 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             db.execSQL(
                 """INSERT OR REPLACE INTO paciente_clinico
                    (id, ownerPeerId, fullName, peerId, allergies, notes,
-                    linkedAt, lastSyncAt, isFavorite, avatarColorIndex)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""".trimIndent(),
+                    linkedAt, lastSyncAt, isFavorite, avatarColorIndex,photoUri)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""".trimIndent(),
                 arrayOf(
                     patient.id, ownerPeerId, patient.fullName, patient.peerId,
                     patient.allergies, patient.notes, patient.linkedAt,
                     patient.lastSyncAt, if (patient.isFavorite) 1 else 0,
-                    patient.avatarColorIndex
+                    patient.avatarColorIndex, patient.photoUri
                 )
             )
         } finally {
@@ -393,7 +394,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                         linkedAt         = cursor.getLong(5),
                         lastSyncAt       = if (cursor.isNull(6)) null else cursor.getLong(6),
                         isFavorite       = cursor.getInt(7) == 1,
-                        avatarColorIndex = cursor.getInt(8)
+                        avatarColorIndex = cursor.getInt(8),
+                        photoUri         = cursor.getString(9) ?: ""
                     ))
                 } while (cursor.moveToNext())
             }
@@ -427,7 +429,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                     linkedAt         = cursor.getLong(5),
                     lastSyncAt       = if (cursor.isNull(6)) null else cursor.getLong(6),
                     isFavorite       = cursor.getInt(7) == 1,
-                    avatarColorIndex = cursor.getInt(8)
+                    avatarColorIndex = cursor.getInt(8),
+                    photoUri         = cursor.getString(9) ?: ""
                 )
             } else null
         } finally {
@@ -853,5 +856,17 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             // db.close()
         }
         return lista
+    }
+    fun actualizarFotoPaciente(peerId: String, ownerPeerId: String, photoUri: String) {
+        val db = this.writableDatabase
+        try {
+            db.execSQL(
+                "UPDATE paciente_clinico SET photoUri = ? WHERE peerId = ? AND ownerPeerId = ?",
+                arrayOf(photoUri, peerId, ownerPeerId)
+            )
+            Log.d("P2P_TFG", "[DB] Foto actualizada para el paciente $peerId")
+        } finally {
+            // db.close()
+        }
     }
 }

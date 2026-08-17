@@ -123,15 +123,15 @@ fun ClinicalAppNavigation(
                         }
                     }
                 },
-                // actions = {
-                //    IconButton(onClick = onCerrarSesion) {
-                //       Icon(
-                //           imageVector        = Icons.Outlined.ExitToApp,
-                //           contentDescription = "Cerrar Sesion",
-                //          tint               = MaterialTheme.colorScheme.error
-                //       )
-                //   }
-                // },
+                 actions = {
+                    IconButton(onClick = onCerrarSesion) {
+                       Icon(
+                           imageVector        = Icons.Outlined.ExitToApp,
+                           contentDescription = "Cerrar Sesion",
+                           tint               = MaterialTheme.colorScheme.error
+                       )
+                  }
+                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = NavColors.SurfaceWhite)
             )
         },

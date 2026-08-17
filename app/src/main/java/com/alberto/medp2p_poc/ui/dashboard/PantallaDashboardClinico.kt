@@ -207,15 +207,15 @@ fun PantallaDashboardClinico(
 
 
 
-            Text(
-                text = "Actividad reciente",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = DashColors.TextPrimary,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
+            //Text(
+            //     text = "Actividad reciente",
+            //   fontSize = 18.sp,
+            //    fontWeight = FontWeight.Bold,
+            //   color = DashColors.TextPrimary,
+            //    modifier = Modifier.padding(bottom = 12.dp)
+            //)
 
-            RecentActivityPlaceholder()
+            // RecentActivityPlaceholder()
             Spacer(modifier = Modifier.height(32.dp))
         }
     }

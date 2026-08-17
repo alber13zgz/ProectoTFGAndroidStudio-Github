@@ -239,7 +239,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             } else null
         } finally {
             cursor.close()
-            db.close()
+            // db.close()
         }
     }
 
@@ -258,7 +258,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             )
             Log.i("P2P_TFG", "[DB] Perfil auth guardado: ${profile.displayName}")
         } finally {
-            db.close()
+            // db.close()
         }
     }
 
@@ -271,7 +271,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             )
             Log.d("P2P_TFG", "[DB] Perfil actualizado: $nuevoNombre | foto=$photoUri")
         } finally {
-            db.close()
+            // db.close()
         }
     }
 
@@ -283,7 +283,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 arrayOf(System.currentTimeMillis(), peerId)
             )
         } finally {
-            db.close()
+            // db.close()
         }
     }
 
@@ -306,7 +306,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                     record.text, record.timestamp, isMineInt, record.senderAlias)
             )
         } finally {
-            db.close()
+            // db.close()
         }
     }
 
@@ -338,7 +338,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             }
         } finally {
             cursor.close()
-            db.close()
+            // db.close()
         }
         return lista
     }
@@ -366,7 +366,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 )
             )
         } finally {
-            db.close()
+            // db.close()
         }
     }
 
@@ -399,7 +399,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             }
         } finally {
             cursor.close()
-            db.close()
+            // db.close()
         }
         return lista
     }
@@ -432,7 +432,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             } else null
         } finally {
             cursor.close()
-            db.close()
+            // db.close()
         }
     }
 
@@ -443,14 +443,18 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 "UPDATE paciente_clinico SET isFavorite = CASE WHEN isFavorite=1 THEN 0 ELSE 1 END WHERE id=?",
                 arrayOf(patientId)
             )
-        } finally { db.close() }
+        } finally {
+            // db.close()
+        }
     }
 
     fun eliminarPacienteClinico(patientId: String) {
         val db = this.writableDatabase
         try {
             db.execSQL("DELETE FROM paciente_clinico WHERE id = ?", arrayOf(patientId))
-        } finally { db.close() }
+        } finally {
+            // db.close()
+        }
     }
 
     fun actualizarDatosPaciente(peerId: String, ownerPeerId: String, allergies: String, notes: String) {
@@ -460,7 +464,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 "UPDATE paciente_clinico SET allergies=?, notes=? WHERE peerId=? AND ownerPeerId=?",
                 arrayOf(allergies, notes, peerId, ownerPeerId)
             )
-        } finally { db.close() }
+        } finally {
+            // db.close()
+        }
     }
 
     // Actualiza solo allergies sin tocar notes — usado desde ProfileScreen del paciente
@@ -471,7 +477,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 "UPDATE paciente_clinico SET allergies = ? WHERE peerId = ? AND ownerPeerId = ?",
                 arrayOf(allergies, peerId, ownerPeerId)
             )
-        } finally { db.close() }
+        } finally {
+            // db.close()
+        }
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -497,7 +505,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             )
             Log.i("P2P_TFG", "[DB] Médico vinculado: $doctorName ($doctorPeerId)")
         } finally {
-            db.close()
+            // db.close()
         }
     }
 
@@ -516,7 +524,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             }
         } finally {
             cursor.close()
-            db.close()
+            // db.close()
         }
         return lista
     }
@@ -532,7 +540,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 "INSERT INTO medicamento (idMedicamento, nombreComercial, principleActivo, concentracionMg, stockActual) VALUES (?, ?, ?, ?, ?)",
                 arrayOf(med.idMedicamento, med.nombreComercial, med.principleActivo, med.concentracionMg, med.stockActual)
             )
-        } finally { db.close() }
+        } finally {
+            // db.close()
+        }
     }
 
     fun obtenerVademecum(): List<com.alberto.medp2p_poc.data.model.Medicamento> {
@@ -553,7 +563,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             }
         } finally {
             cursor.close()
-            db.close()
+            // db.close()
         }
         return lista
     }
@@ -598,7 +608,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             }
         } finally {
             cursor.close()
-            db.close()
+            // db.close()
         }
         return lista
     }
@@ -610,7 +620,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 "INSERT INTO pauta_medica (idPauta, pacienteId, medicamentoId, intervaloHoras) VALUES (?, ?, ?, ?)",
                 arrayOf(pauta.idPauta, pauta.pacienteId, pauta.medicamentoId, pauta.intervaloHoras)
             )
-        } finally { db.close() }
+        } finally {
+            // db.close()
+        }
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -626,7 +638,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                    VALUES (?, ?, ?, ?, ?)""",
                 arrayOf(ownerPeerId, tabla, recordId, accion, System.currentTimeMillis())
             )
-        } finally { db.close() }
+        } finally {
+            // db.close()
+        }
     }
 
     fun updateSyncLogStatus(recordId: String, nuevaAccion: String) {
@@ -637,7 +651,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                    WHERE registroAfectadoId=? AND accion='SEND_PENDING'""",
                 arrayOf(nuevaAccion, System.currentTimeMillis(), recordId)
             )
-        } finally { db.close() }
+        } finally {
+            // db.close()
+        }
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -658,7 +674,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 )
             )
             Log.i("P2P_TFG", "[DB] PautaMedicaV2 insertada: ${pauta.medicacion} → ${pauta.patientPeerId.take(12)}")
-        } finally { db.close() }
+        } finally {
+            // db.close()
+        }
     }
 
     fun insertarRegistroSuministro(registro: com.alberto.medp2p_poc.data.model.RegistroSuministro) {
@@ -674,7 +692,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 )
             )
             Log.i("P2P_TFG", "[DB] Suministro registrado: pauta=${registro.pautaId.take(8)}")
-        } finally { db.close() }
+        } finally {
+            // db.close()
+        }
     }
 
     // QUERY COMPLEJA: pautas activas HOY de pacientes del doctor,
@@ -707,9 +727,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                     AND rs.timestampSuministro >= ?
                     AND rs.timestampSuministro <  ?
               )
-            ORDER BY p.medicacion ASC
+                ORDER BY p.medicacion ASC
         """.trimIndent(),
-            arrayOf(doctorPeerId, inicioDia.toString(), inicioDia.toString(), inicioDia.toString(), finDia.toString())
+            arrayOf(doctorPeerId, finDia.toString(), inicioDia.toString(), inicioDia.toString(), finDia.toString())
         )
         try {
             if (cursor.moveToFirst()) {
@@ -728,7 +748,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             }
         } finally {
             cursor.close()
-            db.close()
+            // db.close()
         }
         return lista
     }
@@ -748,7 +768,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 db.execSQL("INSERT INTO cuidador (usuarioPeerId, nivelPermisos) VALUES (?, ?)", arrayOf(peerId, 1))
             else
                 db.execSQL("INSERT INTO paciente (usuarioPeerId) VALUES (?)", arrayOf(peerId))
-        } finally { db.close() }
+        } finally {
+            // db.close()
+        }
     }
 
     fun obtenerTodosLosPacientes(): List<com.alberto.medp2p_poc.Paciente> {
@@ -769,7 +791,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             }
         } finally {
             cursor.close()
-            db.close()
+            // db.close()
         }
         return lista
     }
@@ -786,9 +808,10 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
-            db.close()
+            // db.close()
         }
     }
+
     fun obtenerPautasActivasPorPaciente(
         patientPeerId: String,
         ownerPeerId: String
@@ -827,7 +850,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             }
         } finally {
             cursor.close()
-            db.close()
+            // db.close()
         }
         return lista
     }

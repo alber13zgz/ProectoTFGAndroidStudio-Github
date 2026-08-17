@@ -259,8 +259,15 @@ fun PantallaDashboardClinico(
                                     showManualDialog = true
                                 }
                             }
-                            .addOnFailureListener {
-                                showLinkSheet = true
+                            .addOnFailureListener { e: Exception ->
+                                android.util.Log.e("P2P_TFG", "Fallo en GMS Scanner. Usando Fallback manual.", e)
+                                scannedPeerId = ""
+                                showManualDialog = true // ¡Abrimos el manual!
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Tu móvil no soporta el escáner de Google. Escribe el ID a mano.",
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
                             }
                     }
                 )
@@ -735,12 +742,14 @@ private fun NuevaPautaBottomSheet(
     onDismiss: () -> Unit,
     onConfirm: (patientPeerId: String, medicacion: String, dosis: String, frecuencia: Int, fechaInicio: Long, fechaFin: Long) -> Unit
 ) {
-    var selectedPatient  by remember { mutableStateOf(pacientes.firstOrNull()) }
+    var selectedPatient  by remember(pacientes) { mutableStateOf(pacientes.firstOrNull()) }
     var dropdownExpanded by remember { mutableStateOf(false) }
     var medicacion       by remember { mutableStateOf("") }
     var dosis            by remember { mutableStateOf("") }
     var frecuenciaText   by remember { mutableStateOf("1") }
     var duracionDiasText by remember { mutableStateOf("") }
+
+    val context = LocalContext.current
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -825,9 +834,12 @@ private fun NuevaPautaBottomSheet(
                         val fechaInicio = System.currentTimeMillis()
                         val fechaFin    = fechaInicio + (duracionDias * 86_400_000L)
                         onConfirm(selectedPatient!!.peerId, medicacion, dosis, frecuencia, fechaInicio, fechaFin)
+                    } else {
+                        // Si te falta un campo, ahora el móvil te lo chivará
+                        Toast.makeText(context, "Falta rellenar algún campo o seleccionar paciente", Toast.LENGTH_SHORT).show()
                     }
                 },
-                enabled  = formValid,
+                enabled  = true, // ARREGLO: Lo forzamos a true para que siempre reaccione
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape    = RoundedCornerShape(16.dp),
                 colors   = ButtonDefaults.buttonColors(containerColor = DashColors.AccentMint)

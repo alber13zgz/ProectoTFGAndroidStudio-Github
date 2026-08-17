@@ -123,28 +123,61 @@ fun PatientDashboardScreen(
                         "Tu medico te vinculara escaneando tu codigo QR"
                     )
                 } else {
-                    medicos.forEach { (_, doctorName, linkedAt) ->
+                    medicos.forEach { medico ->
                         Row(
                             modifier          = Modifier.fillMaxWidth().padding(vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            // ── Avatar: foto real si existe, inicial si no ──
+                            val bitmap = remember(medico.doctorPhotoUri) {
+                                if (medico.doctorPhotoUri.isNotBlank())
+                                    try { android.graphics.BitmapFactory.decodeFile(medico.doctorPhotoUri) }
+                                    catch (e: Exception) { null }
+                                else null
+                            }
                             Box(
-                                modifier         = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(PatDashColors.AccentMintBg),
+                                modifier         = Modifier.size(40.dp).clip(CircleShape)
+                                    .background(PatDashColors.AccentMintBg),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Outlined.MedicalServices, null, Modifier.size(20.dp), tint = PatDashColors.AccentMint)
+                                if (bitmap != null) {
+                                    Image(
+                                        bitmap             = bitmap.asImageBitmap(),
+                                        contentDescription = null,
+                                        modifier           = Modifier.fillMaxSize(),
+                                        contentScale       = androidx.compose.ui.layout.ContentScale.Crop
+                                    )
+                                } else {
+                                    Text(
+                                        text       = medico.doctorName.firstOrNull()?.uppercase() ?: "?",
+                                        fontSize   = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color      = PatDashColors.AccentMint
+                                    )
+                                }
                             }
+
                             Spacer(Modifier.width(12.dp))
+
                             Column(Modifier.weight(1f)) {
-                                Text(doctorName, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = PatDashColors.TextPrimary)
                                 Text(
-                                    "Vinculado el ${SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(linkedAt))}",
+                                    text       = medico.doctorName,
+                                    fontSize   = 15.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color      = PatDashColors.TextPrimary
+                                )
+                                Text(
+                                    text     = "Vinculado el ${SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(medico.linkedAt))}",
                                     fontSize = 12.sp,
                                     color    = PatDashColors.TextSecondary
                                 )
                             }
                         }
-                        HorizontalDivider(color = PatDashColors.DividerLight, thickness = 0.5.dp, modifier = Modifier.padding(vertical = 2.dp))
+                        HorizontalDivider(
+                            color    = PatDashColors.DividerLight,
+                            thickness = 0.5.dp,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        )
                     }
                 }
             }

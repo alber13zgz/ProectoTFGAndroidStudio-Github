@@ -19,7 +19,7 @@ data class Patient(
     val linkedAt: Long = System.currentTimeMillis(),
     val lastSyncAt: Long? = null,
     val isFavorite: Boolean = false,
-    val avatarColorIndex: Int = 0
+    val avatarColorIndex: Int = 0,
     val photoUri: String = ""
 ) {
     /** Iniciales para el avatar circular (máx. 2 caracteres). */

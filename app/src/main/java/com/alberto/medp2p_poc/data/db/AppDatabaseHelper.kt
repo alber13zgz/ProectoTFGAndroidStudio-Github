@@ -27,6 +27,13 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         const val DATABASE_VERSION = 5
     }
 
+    data class MedicoVinculado(
+        val doctorPeerId: String,
+        val doctorName: String,
+        val linkedAt: Long,
+        val doctorPhotoUri: String
+    )
+
     override fun onCreate(db: SQLiteDatabase) {
         Log.i("P2P_TFG", "[DB] Creando base de datos desde cero (v$DATABASE_VERSION)...")
 
@@ -166,6 +173,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 ownerPeerId TEXT NOT NULL DEFAULT '',
                 doctorPeerId TEXT NOT NULL,
                 doctorName TEXT NOT NULL,
+                doctorPhotoUri TEXT NOT NULL DEFAULT '',
                 linkedAt INTEGER NOT NULL
             )
         """.trimIndent())
@@ -492,19 +500,18 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     fun guardarMedicoVinculado(
         doctorPeerId: String,
         doctorName: String,
-        ownerPeerId: String
+        ownerPeerId: String,
+        doctorPhotoUri: String = ""
     ) {
         val db = this.writableDatabase
         try {
             db.execSQL(
                 """INSERT OR REPLACE INTO medico_vinculado
-                   (id, ownerPeerId, doctorPeerId, doctorName, linkedAt)
-                   VALUES (?, ?, ?, ?, ?)""",
-                arrayOf(
-                    java.util.UUID.randomUUID().toString(),
-                    ownerPeerId, doctorPeerId, doctorName,
-                    System.currentTimeMillis()
-                )
+               (id, ownerPeerId, doctorPeerId, doctorName, doctorPhotoUri, linkedAt)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+                arrayOf(java.util.UUID.randomUUID().toString(),
+                    ownerPeerId, doctorPeerId, doctorName, doctorPhotoUri,
+                    System.currentTimeMillis())
             )
             Log.i("P2P_TFG", "[DB] Médico vinculado: $doctorName ($doctorPeerId)")
         } finally {
@@ -512,23 +519,25 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         }
     }
 
-    fun obtenerMedicosVinculados(ownerPeerId: String): List<Triple<String, String, Long>> {
-        val lista = mutableListOf<Triple<String, String, Long>>()
+    fun obtenerMedicosVinculados(ownerPeerId: String): List<MedicoVinculado> {
+        val lista = mutableListOf<MedicoVinculado>()
         val db = this.readableDatabase
         val cursor = db.rawQuery(
-            "SELECT doctorPeerId, doctorName, linkedAt FROM medico_vinculado WHERE ownerPeerId = ? ORDER BY linkedAt DESC",
+            "SELECT doctorPeerId, doctorName, linkedAt, doctorPhotoUri FROM medico_vinculado WHERE ownerPeerId = ? ORDER BY linkedAt DESC",
             arrayOf(ownerPeerId)
         )
         try {
             if (cursor.moveToFirst()) {
                 do {
-                    lista.add(Triple(cursor.getString(0), cursor.getString(1), cursor.getLong(2)))
+                    lista.add(MedicoVinculado(
+                        doctorPeerId   = cursor.getString(0),
+                        doctorName     = cursor.getString(1),
+                        linkedAt       = cursor.getLong(2),
+                        doctorPhotoUri = cursor.getString(3)
+                    ))
                 } while (cursor.moveToNext())
             }
-        } finally {
-            cursor.close()
-            // db.close()
-        }
+        } finally { cursor.close(); db.close() }
         return lista
     }
 

@@ -168,6 +168,12 @@ fun ClinicalAppNavigation(
                     onBack = { navController.popBackStack() }
                 )
             }
+            composable("alertas_pendientes") {
+                PantallaAlertasPendientes(
+                    viewModel = dashboardViewModel,
+                    onBack    = { navController.popBackStack() }
+                )
+            }
 
             composable(
                 route     = "patient_detail/{peerId}",

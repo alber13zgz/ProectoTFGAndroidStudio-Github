@@ -49,8 +49,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val dashboard: StateFlow<DashboardData> = _dashboard.asStateFlow()
 
     // ── FIX UI REACTIVA: StateFlow para mantener la lista de médicos en vivo ──
-    private val _medicosVinculados = MutableStateFlow<List<Triple<String, String, Long>>>(emptyList())
-    val medicosVinculados: StateFlow<List<Triple<String, String, Long>>> = _medicosVinculados.asStateFlow()
+    private val _medicosVinculados = MutableStateFlow<List<MedicoVinculado>>(emptyList())
+    val medicosVinculados: StateFlow<List<MedicoVinculado>> = _medicosVinculados.asStateFlow()
 
     // ── StateFlow de Alertas Pendientes (PAUTAS MÉDICAS) ──
     private val _alertasPendientes = MutableStateFlow<List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>>(emptyList())
@@ -126,7 +126,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun loadMedicosVinculados() {
         viewModelScope.launch(Dispatchers.IO) {
-            _medicosVinculados.value = getMedicosVinculados()
+            _medicosVinculados.value = dbHelper.obtenerMedicosVinculados(_dashboard.value.ownerPeerId)
         }
     }
 
@@ -223,7 +223,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     host                   = node,
                     destinationCircuitAddr = destAddr,
                     doctorPeerId           = owner,
-                    doctorName             = myName
+                    doctorName             = myName,
+                    doctorPhotoUri         = _dashboard.value.photoUri
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "Error vinculando paciente: ${e.message}")

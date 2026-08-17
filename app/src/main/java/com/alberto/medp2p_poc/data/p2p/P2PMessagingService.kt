@@ -65,7 +65,8 @@ data class P2PEnvelope(
 @Serializable
 data class LinkDoctorPayload(
     val doctorPeerId: String,
-    val doctorName: String
+    val doctorName: String,
+    val doctorPhotoUri: String = ""
 )
 
 @Serializable
@@ -200,7 +201,8 @@ class P2PMessagingService(
                 dbHelper.guardarMedicoVinculado(
                     doctorPeerId = payload.doctorPeerId,
                     doctorName   = payload.doctorName,
-                    ownerPeerId  = ownerPeerId
+                    ownerPeerId  = ownerPeerId,
+                    doctorPhotoUri = payload.doctorPhotoUri
                 )
                 Log.i(TAG, "[RECEPTOR] Médico vinculado: ${payload.doctorName}")
                 _syncEvents.emit(System.currentTimeMillis())
@@ -324,7 +326,8 @@ class P2PMessagingService(
         host: Host,
         destinationCircuitAddr: String,
         doctorPeerId: String,
-        doctorName: String
+        doctorName: String,
+        doctorPhotoUri: String = ""
     ): Unit = withContext(Dispatchers.IO) {
         val destPeerId       = destinationCircuitAddr.substringAfterLast("/")
         val payloadJson      = json.encodeToString(LinkDoctorPayload(doctorPeerId, doctorName))

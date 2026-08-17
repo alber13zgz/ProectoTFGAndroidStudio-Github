@@ -150,8 +150,13 @@ fun PantallaDashboardClinico(
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
                 alertas.forEach { pauta ->
+                    // Buscamos el nombre del paciente utilizando su peerId
+                    val pacienteAsociado = pacientes.find { it.peerId == pauta.patientPeerId }
+                    val nombrePaciente = pacienteAsociado?.fullName ?: "Paciente desconocido"
+
                     AlertaMedicacionCard(
                         pauta = pauta,
+                        patientName = nombrePaciente,
                         onSuministrada = { viewModel.registrarSuministro(pauta.id, pauta.patientPeerId) }
                     )
                     Spacer(Modifier.height(8.dp))
@@ -640,7 +645,7 @@ private fun RecentActivityPlaceholder() {
 }
 
 @Composable
-internal  fun AlertaMedicacionCard(
+/*internal  fun AlertaMedicacionCard(
     pauta: com.alberto.medp2p_poc.data.model.PautaMedicaV2,
     onSuministrada: () -> Unit
 ) {
@@ -702,6 +707,109 @@ internal  fun AlertaMedicacionCard(
             text = {
                 Text(
                     "¿Marcar ${pauta.medicacion} como administrada hoy? " +
+                            "Esta accion quedara registrada en el historial del paciente.",
+                    fontSize = 14.sp, color = DashColors.TextSecondary,
+                    textAlign = TextAlign.Center, lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { onSuministrada(); showConfirmDialog = false },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = DashColors.AccentMint),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Si, registrar", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showConfirmDialog = false },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Cancelar", color = DashColors.TextSecondary) }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = DashColors.CardWhite
+        )
+    }
+}*/
+
+internal fun AlertaMedicacionCard(
+    pauta: com.alberto.medp2p_poc.data.model.PautaMedicaV2,
+    patientName: String, // <--- 1. Añadimos el parámetro con el nombre del paciente
+    onSuministrada: () -> Unit
+) {
+    var showConfirmDialog by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(3.dp),
+        colors = CardDefaults.cardColors(containerColor = DashColors.CardWhite)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
+                    .background(DashColors.WarningAmberBg),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Outlined.Medication, null, Modifier.size(22.dp), tint = DashColors.WarningAmber)
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = pauta.medicacion,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = DashColors.TextPrimary
+                )
+                // ── 2. MOSTRAMOS EL NOMBRE DEL PACIENTE EN LA TARJETA ──
+                Text(
+                    text = "Paciente: $patientName",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = DashColors.PrimaryBlue
+                )
+                Text(
+                    text = "Dosis: ${pauta.dosis}  ·  ${pauta.frecuenciaDiaria}x/día",
+                    fontSize = 11.sp,
+                    color = DashColors.TextSecondary
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Button(
+                onClick = { showConfirmDialog = true },
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = DashColors.AccentMint)
+            ) {
+                Text("Suministrada", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+
+    if (showConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDialog = false },
+            icon = {
+                Box(
+                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
+                        .background(DashColors.AccentMint.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Outlined.CheckCircle, null,
+                        Modifier.size(26.dp), tint = DashColors.AccentMint)
+                }
+            },
+            title = {
+                Text("Confirmar suministro", fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+            },
+            text = {
+                // ── 3. TAMBIÉN LO INCLUIMOS EN EL DIÁLOGO DE CONFIRMACIÓN ──
+                Text(
+                    text = "¿Marcar ${pauta.medicacion} como administrada hoy para $patientName? " +
                             "Esta accion quedara registrada en el historial del paciente.",
                     fontSize = 14.sp, color = DashColors.TextSecondary,
                     textAlign = TextAlign.Center, lineHeight = 20.sp

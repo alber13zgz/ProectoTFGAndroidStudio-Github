@@ -31,6 +31,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.alberto.medp2p_poc.data.model.UserRole
 import com.alberto.medp2p_poc.ui.dashboard.DashboardViewModel
+import com.alberto.medp2p_poc.ui.dashboard.PantallaAlertasPendientes
 import com.alberto.medp2p_poc.ui.dashboard.PantallaDashboardClinico
 import com.alberto.medp2p_poc.ui.patients.PantallaPacientes
 import com.alberto.medp2p_poc.ui.patients.PatientsViewModel
@@ -146,12 +147,9 @@ fun ClinicalAppNavigation(
                 LaunchedEffect(Unit) { dashboardViewModel.refreshCounters() }
                 PantallaDashboardClinico(
                     viewModel            = dashboardViewModel,
-                    onNavigateToPatients = {
-                        navController.navigate("patients") { launchSingleTop = true }
-                    },
-                    onNavigateToProfile  = {
-                        navController.navigate("profile_edit") { launchSingleTop = true }
-                    }
+                    onNavigateToPatients = { navController.navigate("patients") { launchSingleTop = true } },
+                    onNavigateToProfile  = { navController.navigate("profile_edit") { launchSingleTop = true } },
+                    onNavigateToAlertas  = { navController.navigate("alertas_pendientes") { launchSingleTop = true } }  // ← añadir
                 )
             }
 
@@ -166,6 +164,12 @@ fun ClinicalAppNavigation(
                         navController.navigate("patient_detail/$peerId")
                     },
                     onBack = { navController.popBackStack() }
+                )
+            }
+            composable("alertas_pendientes") {
+                PantallaAlertasPendientes(
+                    viewModel = dashboardViewModel,
+                    onBack    = { navController.popBackStack() }
                 )
             }
 

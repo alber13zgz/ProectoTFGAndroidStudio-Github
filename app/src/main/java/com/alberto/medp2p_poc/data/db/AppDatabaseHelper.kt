@@ -382,9 +382,10 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     fun obtenerPacientesClinico(ownerPeerId: String): List<com.alberto.medp2p_poc.data.model.Patient> {
         val lista = mutableListOf<com.alberto.medp2p_poc.data.model.Patient>()
         val db = this.readableDatabase
+        // ── AÑADIDO 'photoUri' al final del SELECT para que existan las 10 columnas (0 a 9) ──
         val cursor = db.rawQuery(
             """SELECT id, fullName, peerId, allergies, notes, linkedAt,
-                      lastSyncAt, isFavorite, avatarColorIndex
+                      lastSyncAt, isFavorite, avatarColorIndex, photoUri
                FROM paciente_clinico
                WHERE ownerPeerId = ?
                ORDER BY isFavorite DESC, fullName ASC""",
@@ -403,17 +404,15 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                         lastSyncAt       = if (cursor.isNull(6)) null else cursor.getLong(6),
                         isFavorite       = cursor.getInt(7) == 1,
                         avatarColorIndex = cursor.getInt(8),
-                        photoUri         = cursor.getString(9) ?: ""
+                        photoUri         = cursor.getString(9) ?: "" // <--- Lee perfectamente la columna 9
                     ))
                 } while (cursor.moveToNext())
             }
         } finally {
             cursor.close()
-            // db.close()
         }
         return lista
     }
-
     fun obtenerPacienteClinicoPorPeerId(
         peerId: String,
         ownerPeerId: String
@@ -421,9 +420,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val db = this.readableDatabase
         val cursor = db.rawQuery(
             """SELECT id, fullName, peerId, allergies, notes, linkedAt,
-                      lastSyncAt, isFavorite, avatarColorIndex
-               FROM paciente_clinico
-               WHERE peerId = ? AND ownerPeerId = ? LIMIT 1""",
+                  lastSyncAt, isFavorite, avatarColorIndex, photoUri
+           FROM paciente_clinico
+           WHERE peerId = ? AND ownerPeerId = ? LIMIT 1""",
             arrayOf(peerId, ownerPeerId)
         )
         return try {
@@ -537,7 +536,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                     ))
                 } while (cursor.moveToNext())
             }
-        } finally { cursor.close(); db.close() }
+        } finally { cursor.close();
+            //db.close()
+        }
         return lista
     }
 
@@ -832,23 +833,24 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val db    = this.readableDatabase
         val ahora = System.currentTimeMillis()
 
+        android.util.Log.d("P2P_DEBUG", "[DB] Buscando pautas directas para patientPeerId=$patientPeerId")
+
+        // He quitado el INNER JOIN. Ahora buscamos directamente en pauta_medica_v2
         val cursor = db.rawQuery("""
-        SELECT p.id, p.patientPeerId, p.doctorCreatorPeerId,
-               p.medicacion, p.dosis, p.frecuenciaDiaria, p.fechaInicio, p.fechaFin
-        FROM pauta_medica_v2 p
-        INNER JOIN paciente_clinico pc
-            ON pc.peerId = p.patientPeerId
-            AND pc.ownerPeerId = ?
-        WHERE p.patientPeerId = ?
-          AND p.fechaFin >= ?
-        ORDER BY p.fechaFin ASC
+        SELECT id, patientPeerId, doctorCreatorPeerId,
+               medicacion, dosis, frecuenciaDiaria, fechaInicio, fechaFin
+        FROM pauta_medica_v2
+        WHERE patientPeerId = ?
+          AND fechaFin >= ?
+        ORDER BY fechaFin ASC
     """.trimIndent(),
-            arrayOf(ownerPeerId, patientPeerId, ahora.toString())
+            arrayOf(patientPeerId, ahora.toString())
         )
+
         try {
             if (cursor.moveToFirst()) {
                 do {
-                    lista.add(com.alberto.medp2p_poc.data.model.PautaMedicaV2(
+                    val pauta = com.alberto.medp2p_poc.data.model.PautaMedicaV2(
                         id                  = cursor.getString(0),
                         patientPeerId       = cursor.getString(1),
                         doctorCreatorPeerId = cursor.getString(2),
@@ -857,12 +859,15 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                         frecuenciaDiaria    = cursor.getInt(5),
                         fechaInicio         = cursor.getLong(6),
                         fechaFin            = cursor.getLong(7)
-                    ))
+                    )
+                    lista.add(pauta)
+                    android.util.Log.d("P2P_DEBUG", "[DB] ✅ Pauta encontrada: ${pauta.medicacion}")
                 } while (cursor.moveToNext())
+            } else {
+                android.util.Log.w("P2P_DEBUG", "[DB] ⚠️ No hay pautas en la tabla pauta_medica_v2 para este paciente.")
             }
         } finally {
             cursor.close()
-            // db.close()
         }
         return lista
     }

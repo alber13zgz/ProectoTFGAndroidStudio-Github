@@ -1,5 +1,6 @@
 package com.alberto.medp2p_poc.ui.patients.detail
 
+import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -20,6 +21,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -100,6 +102,17 @@ fun PantallaDetallePaciente(
                 },
                 onAddPrescription = { medId, hours ->
                     viewModel.addPrescription(peerId, medId, hours)
+                },
+                onAddPauta = { medicacion, dosis, frecuencia, fechaInicio, fechaFin ->
+                    dashboardViewModel.crearPauta(
+                        patientPeerId    = peerId,
+                        medicacion       = medicacion,
+                        dosis            = dosis,
+                        frecuenciaDiaria = frecuencia,
+                        fechaInicio      = fechaInicio,
+                        fechaFin         = fechaFin
+                    )
+                    viewModel.loadPatientDetail(peerId, dashboardViewModel.currentOwnerPeerId)
                 }
             )
         }
@@ -115,7 +128,8 @@ private fun PatientDetailContent(
     history: List<MedicalRecord>,
     onBack: () -> Unit,
     onAddNote: (String) -> Unit,
-    onAddPrescription: (medicamentoId: String, intervaloHoras: Int) -> Unit
+    onAddPrescription: (medicamentoId: String, intervaloHoras: Int) -> Unit,
+    onAddPauta: (medicacion: String, dosis: String, frecuencia: Int, fechaInicio: Long, fechaFin: Long) -> Unit
 ) {
     val tabs = listOf(
         TabInfo("Datos",      Icons.Outlined.Person),
@@ -124,6 +138,7 @@ private fun PatientDetailContent(
     )
     val pagerState    = rememberPagerState(pageCount = { tabs.size })
     val coroutineScope = rememberCoroutineScope()
+    var showNuevaPautaSheet by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().background(DetailColors.SurfaceWhite)) {
         PatientDetailHeader(patient = patient, onBack = onBack)
@@ -165,9 +180,24 @@ private fun PatientDetailContent(
         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
             when (page) {
                 0 -> TabDatosPersonales(patient = patient)
-                1 -> TabMedicaciones(medications = medications, pautasActivas = pautasActivas)
+                1 -> TabMedicaciones(
+                    medications      = medications,
+                    pautasActivas    = pautasActivas,
+                    onOpenNuevaPauta = { showNuevaPautaSheet = true }
+                )
                 2 -> TabHistorial(history = history, onAddNote = onAddNote)
             }
+        }
+
+        if (showNuevaPautaSheet) {
+            NuevaPautaPacienteBottomSheet(
+                patientName = patient.fullName,
+                onDismiss   = { showNuevaPautaSheet = false },
+                onConfirm   = { medicacion, dosis, frecuencia, fechaInicio, fechaFin ->
+                    onAddPauta(medicacion, dosis, frecuencia, fechaInicio, fechaFin)
+                    showNuevaPautaSheet = false
+                }
+            )
         }
     }
 }
@@ -245,7 +275,8 @@ private fun TabDatosPersonales(patient: Patient) {
 @Composable
 private fun TabMedicaciones(
     medications: List<ActiveMedication>,
-    pautasActivas: List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>
+    pautasActivas: List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>,
+    onOpenNuevaPauta: () -> Unit
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -253,10 +284,18 @@ private fun TabMedicaciones(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically) {
                 Text(text = "Medicacion activa", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DetailColors.TextPrimary)
-                Surface(shape = RoundedCornerShape(8.dp), color = DetailColors.BlueBg) {
-                    Text(text = "${medications.size} pautas", fontSize = 12.sp, color = DetailColors.PrimaryBlue,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
+
+                FilledTonalButton(
+                    onClick = onOpenNuevaPauta,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = DetailColors.PrimaryBlue.copy(alpha = 0.1f),
+                        contentColor   = DetailColors.PrimaryBlue
+                    )
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Nueva pauta", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -273,7 +312,7 @@ private fun TabMedicaciones(
             }
         }
 
-        if (medications.isEmpty()) {
+        if (medications.isEmpty() && pautasActivas.isEmpty()) {
             item {
                 EmptyTabState(icon = Icons.Outlined.MedicalServices,
                     message = "Sin medicacion activa",
@@ -485,6 +524,98 @@ private fun PautaActivaCard(pauta: com.alberto.medp2p_poc.data.model.PautaMedica
                     Text("Hasta el ${formatDate(pauta.fechaFin)}  ·  $diasRestantes días restantes",
                         fontSize = 11.sp, color = urgencyColor, fontWeight = FontWeight.Medium)
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NuevaPautaPacienteBottomSheet(
+    patientName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (medicacion: String, dosis: String, frecuencia: Int, fechaInicio: Long, fechaFin: Long) -> Unit
+) {
+    var medicacion       by remember { mutableStateOf("") }
+    var dosis            by remember { mutableStateOf("") }
+    var frecuenciaText   by remember { mutableStateOf("1") }
+    var duracionDiasText by remember { mutableStateOf("") }
+
+    val context = LocalContext.current
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        containerColor = DetailColors.CardWhite
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text("Nueva Pauta Médica", fontSize = 20.sp,
+                fontWeight = FontWeight.Bold, color = DetailColors.TextPrimary)
+            Text("Asignando pauta para: $patientName", fontSize = 12.sp, color = DetailColors.PrimaryBlue, fontWeight = FontWeight.SemiBold)
+
+            OutlinedTextField(value = medicacion, onValueChange = { medicacion = it },
+                label = { Text("Medicacion") }, placeholder = { Text("Ej: Ibuprofeno") },
+                singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+
+            OutlinedTextField(value = dosis, onValueChange = { dosis = it },
+                label = { Text("Dosis") }, placeholder = { Text("Ej: 400mg") },
+                singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+
+            OutlinedTextField(
+                value = frecuenciaText,
+                onValueChange = { if (it.all(Char::isDigit) && it.length <= 2) frecuenciaText = it },
+                label = { Text("Frecuencia diaria (veces/dia)") },
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedTextField(
+                value = duracionDiasText,
+                onValueChange = { if (it.all(Char::isDigit) && it.length <= 3) duracionDiasText = it },
+                label = { Text("Duracion del tratamiento (dias)") },
+                placeholder = { Text("Ej: 7, 14, 30") },
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            val frecuencia   = frecuenciaText.toIntOrNull() ?: 0
+            val duracionDias = duracionDiasText.toIntOrNull() ?: 0
+            val formValid    = medicacion.isNotBlank()
+                    && dosis.isNotBlank() && frecuencia > 0 && duracionDias > 0
+
+            Button(
+                onClick = {
+                    if (formValid) {
+                        val fechaInicio = System.currentTimeMillis()
+                        val fechaFin    = fechaInicio + (duracionDias * 86_400_000L)
+                        onConfirm(medicacion, dosis, frecuencia, fechaInicio, fechaFin)
+                        Toast.makeText(context, "Pauta creada correctamente", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Falta rellenar algún campo obligatorio", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                enabled  = true,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape    = RoundedCornerShape(16.dp),
+                colors   = ButtonDefaults.buttonColors(containerColor = DetailColors.PrimaryBlue)
+            ) {
+                Icon(Icons.Outlined.MedicalServices, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Crear Pauta", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
         }
     }

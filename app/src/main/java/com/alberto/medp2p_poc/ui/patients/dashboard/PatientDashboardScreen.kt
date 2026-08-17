@@ -62,6 +62,7 @@ fun PatientDashboardScreen(
     val data by dashboardViewModel.dashboard.collectAsStateWithLifecycle()
     var showQrDialog by remember { mutableStateOf(false) }
     val medicos by dashboardViewModel.medicosVinculados.collectAsStateWithLifecycle()
+    val pautasPaciente by dashboardViewModel.pautasPacienteActivas.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier.fillMaxSize().background(PatDashColors.SurfaceWhite)
@@ -153,8 +154,15 @@ fun PatientDashboardScreen(
 
             // ══ SECCIÓN 3: MI MEDICACIÓN ══
             SectionCard(Icons.Outlined.Medication, "Mi Medicacion", PatDashColors.PurpleBg, PatDashColors.Purple) {
-                EmptyStateBox(Icons.Outlined.Medication, "Sin medicacion asignada",
-                    "Cuando tu medico te asigne una pauta, aparecera aqui")
+                if (pautasPaciente.isEmpty()) {
+                    EmptyStateBox(Icons.Outlined.Medication, "Sin medicacion asignada",
+                        "Cuando tu medico te asigne una pauta, aparecera aqui")
+                } else {
+                    pautasPaciente.forEach { pauta ->
+                        PautaPacienteCard(pauta = pauta)
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
             }
 
             Spacer(Modifier.height(24.dp))
@@ -290,4 +298,16 @@ private fun EmptyStateBox(icon: ImageVector, message: String, hint: String) {
 private fun saludoSegunHora(): String {
     val hora = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
     return when { hora < 7 -> "Buenas noches,"; hora < 13 -> "Buenos dias,"; hora < 20 -> "Buenas tardes,"; else -> "Buenas noches," }
+}
+@Composable
+private fun PautaPacienteCard(pauta: com.alberto.medp2p_poc.data.model.PautaMedicaV2) {
+    val diasRestantes = ((pauta.fechaFin - System.currentTimeMillis()) / 86_400_000L).coerceAtLeast(0)
+    val urgencyColor = if (diasRestantes <= 2) PatDashColors.ErrorRed else PatDashColors.AccentMint
+
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
+        Column(Modifier.padding(14.dp)) {
+            Text(pauta.medicacion, fontWeight = FontWeight.Bold)
+            Text("${pauta.dosis} · ${pauta.frecuenciaDiaria}x al día", fontSize = 12.sp)
+        }
+    }
 }

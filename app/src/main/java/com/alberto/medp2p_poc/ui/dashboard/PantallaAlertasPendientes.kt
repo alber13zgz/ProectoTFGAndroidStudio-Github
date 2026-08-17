@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,6 +27,8 @@ fun PantallaAlertasPendientes(
     onBack: () -> Unit
 ) {
     val alertas by viewModel.alertasPendientes.collectAsStateWithLifecycle()
+    // 1. Recogemos la lista de pacientes para poder buscar sus nombres
+    val pacientes by viewModel.pacientesDoctor.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
@@ -52,33 +55,36 @@ fun PantallaAlertasPendientes(
                     Spacer(Modifier.height(16.dp))
                     Text("Todo al dia", fontSize = 20.sp,
                         fontWeight = FontWeight.Bold, color = Color(0xFF1A1C2B))
-                    Text(
-                        "No hay medicacion pendiente para hoy",
+                    Text("No hay medicacion pendiente para hoy",
                         fontSize = 14.sp, color = Color(0xFF6B7280),
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .padding(horizontal = 32.dp)
-                            .padding(top = 8.dp)
-                    )
+                            .padding(top = 8.dp))
                 }
             }
         } else {
             LazyColumn(
-                modifier            = Modifier.fillMaxSize().padding(padding),
-                contentPadding      = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 item {
                     Text(
                         "${alertas.size} medicacion${if (alertas.size != 1) "es" else ""} pendiente${if (alertas.size != 1) "s" else ""}",
                         fontSize = 13.sp,
-                        color    = Color(0xFF6B7280),
+                        color = Color(0xFF6B7280),
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
                 }
                 items(alertas, key = { it.id }) { pauta ->
+                    // 2. Buscamos el nombre del paciente asociado al peerId de la pauta
+                    val pacienteAsociado = pacientes.find { it.peerId == pauta.patientPeerId }
+                    val nombrePaciente = pacienteAsociado?.fullName ?: "Paciente desconocido"
+
                     AlertaMedicacionCard(
                         pauta          = pauta,
+                        patientName    = nombrePaciente, // <--- 3. Pasamos el nombre requerido
                         onSuministrada = {
                             viewModel.registrarSuministro(pauta.id, pauta.patientPeerId)
                         }

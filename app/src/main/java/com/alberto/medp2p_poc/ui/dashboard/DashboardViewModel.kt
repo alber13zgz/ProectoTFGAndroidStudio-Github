@@ -58,6 +58,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private val _alertasPendientes = MutableStateFlow<List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>>(emptyList())
     val alertasPendientes: StateFlow<List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>> = _alertasPendientes.asStateFlow()
 
+    private val _pautasPacienteActivas = MutableStateFlow<List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>>(emptyList())
+    val pautasPacienteActivas: StateFlow<List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>> = _pautasPacienteActivas.asStateFlow()
+
     // ── AÑADIDO (PASO 3): StateFlow de la lista de Pacientes del Doctor (para el Dropdown) ──
     private val _pacientesDoctor = MutableStateFlow<List<com.alberto.medp2p_poc.data.model.Patient>>(emptyList())
     val pacientesDoctor: StateFlow<List<com.alberto.medp2p_poc.data.model.Patient>> = _pacientesDoctor.asStateFlow()
@@ -95,7 +98,16 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         private const val RELAY_BASE =
             "/ip4/13.48.59.216/tcp/4001/p2p/12D3KooWEBiChhAXXnZRPoM37aoawZbYQKp7WxqtC7LrfZFab4TV"
     }
-
+    private fun loadPautasPacienteActivas() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val owner = _dashboard.value.ownerPeerId
+                _pautasPacienteActivas.value = dbHelper.obtenerPautasActivasPorPaciente(owner, owner)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error cargando pautas del paciente: ${e.message}")
+            }
+        }
+    }
     fun initialize(session: UserSession, privateKey: PrivKey? = null) {
         storedPrivateKey = privateKey
         _dashboard.value = _dashboard.value.copy(
@@ -115,6 +127,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 // Recargamos los datos al haber actividad P2P
                 loadMedicosVinculados()
                 loadAlertasPendientes()
+                loadPautasPacienteActivas()
                 loadPacientesDoctor()
             }
         }

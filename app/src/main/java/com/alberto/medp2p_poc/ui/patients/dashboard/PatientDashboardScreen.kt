@@ -33,22 +33,24 @@ import com.alberto.medp2p_poc.ui.qr.generateQrBitmap
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.alberto.medp2p_poc.data.db.AppDatabaseHelper.MedicoVinculado
+
 
 private object PatDashColors {
-    val PrimaryBlue    = Color(0xFF005FB8)
+    val PrimaryBlue     = Color(0xFF005FB8)
     val PrimaryBlueDark = Color(0xFF003D7A)
-    val AccentMint     = Color(0xFF00C9A7)
-    val AccentMintBg   = Color(0xFFE6FAF5)
-    val SurfaceWhite   = Color(0xFFF8FAFE)
-    val CardWhite      = Color(0xFFFFFFFF)
-    val TextPrimary    = Color(0xFF1A1C2B)
-    val TextSecondary  = Color(0xFF6B7280)
-    val DividerLight   = Color(0xFFE8EDF2)
-    val ErrorRed       = Color(0xFFDC3545)
-    val WarningAmber   = Color(0xFFF59E0B)
-    val Purple         = Color(0xFF7C3AED)
-    val PurpleBg       = Color(0xFFF3EEFE)
-    val BlueBg         = Color(0xFFEBF3FE)
+    val AccentMint      = Color(0xFF00C9A7)
+    val AccentMintBg    = Color(0xFFE6FAF5)
+    val SurfaceWhite    = Color(0xFFF8FAFE)
+    val CardWhite       = Color(0xFFFFFFFF)
+    val TextPrimary     = Color(0xFF1A1C2B)
+    val TextSecondary   = Color(0xFF6B7280)
+    val DividerLight    = Color(0xFFE8EDF2)
+    val ErrorRed        = Color(0xFFDC3545)
+    val WarningAmber    = Color(0xFFF59E0B)
+    val Purple          = Color(0xFF7C3AED)
+    val PurpleBg        = Color(0xFFF3EEFE)
+    val BlueBg          = Color(0xFFEBF3FE)
 }
 
 @Composable
@@ -59,14 +61,10 @@ fun PatientDashboardScreen(
 ) {
     val data by dashboardViewModel.dashboard.collectAsStateWithLifecycle()
     var showQrDialog by remember { mutableStateOf(false) }
-
-
     val medicos by dashboardViewModel.medicosVinculados.collectAsStateWithLifecycle()
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(PatDashColors.SurfaceWhite)
+        modifier = Modifier.fillMaxSize().background(PatDashColors.SurfaceWhite)
             .verticalScroll(rememberScrollState())
     ) {
         PatientHeader(
@@ -76,18 +74,14 @@ fun PatientDashboardScreen(
         )
 
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .offset(y = (-20).dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).offset(y = (-20).dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // ══ BOTÓN GRANDE: COMPARTIR MI ID ══
             Button(
-                onClick  = { showQrDialog = true },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape    = RoundedCornerShape(16.dp),
-                colors   = ButtonDefaults.buttonColors(containerColor = PatDashColors.PrimaryBlue),
+                onClick   = { showQrDialog = true },
+                modifier  = Modifier.fillMaxWidth().height(56.dp),
+                shape     = RoundedCornerShape(16.dp),
+                colors    = ButtonDefaults.buttonColors(containerColor = PatDashColors.PrimaryBlue),
                 elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
             ) {
                 Icon(Icons.Outlined.QrCode, null, Modifier.size(22.dp))
@@ -108,66 +102,41 @@ fun PatientDashboardScreen(
                 ) {
                     Icon(Icons.Filled.Edit, null, Modifier.size(18.dp), tint = PatDashColors.PrimaryBlue)
                     Spacer(Modifier.width(8.dp))
-                    Text("Editar mi perfil", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = PatDashColors.PrimaryBlue)
+                    Text("Editar mi perfil", fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold, color = PatDashColors.PrimaryBlue)
                 }
             }
 
-            // ══ SECCIÓN 2: MIS MÉDICOS ══
-            // medicos se carga arriba con produceState al nivel de PatientDashboardScreen.
-            // Aquí solo consumimos el valor ya calculado — sin llamadas suspending.
+            // ══ SECCIÓN 2: MIS MÉDICOS — sin foto, igual que antes ══
             SectionCard(Icons.Outlined.MedicalServices, "Mis Medicos", PatDashColors.AccentMintBg, PatDashColors.AccentMint) {
                 if (medicos.isEmpty()) {
-                    EmptyStateBox(
-                        Icons.Outlined.MedicalServices,
+                    EmptyStateBox(Icons.Outlined.MedicalServices,
                         "Aun no tienes medicos vinculados",
-                        "Tu medico te vinculara escaneando tu codigo QR"
-                    )
+                        "Tu medico te vinculara escaneando tu codigo QR")
                 } else {
                     medicos.forEach { medico ->
                         Row(
                             modifier          = Modifier.fillMaxWidth().padding(vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // ── Avatar: foto real si existe, inicial si no ──
-                            val bitmap = remember(medico.doctorPhotoUri) {
-                                if (medico.doctorPhotoUri.isNotBlank())
-                                    try { android.graphics.BitmapFactory.decodeFile(medico.doctorPhotoUri) }
-                                    catch (e: Exception) { null }
-                                else null
-                            }
                             Box(
-                                modifier         = Modifier.size(40.dp).clip(CircleShape)
+                                modifier         = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp))
                                     .background(PatDashColors.AccentMintBg),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (bitmap != null) {
-                                    Image(
-                                        bitmap             = bitmap.asImageBitmap(),
-                                        contentDescription = null,
-                                        modifier           = Modifier.fillMaxSize(),
-                                        contentScale       = androidx.compose.ui.layout.ContentScale.Crop
-                                    )
-                                } else {
-                                    Text(
-                                        text       = medico.doctorName.firstOrNull()?.uppercase() ?: "?",
-                                        fontSize   = 16.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color      = PatDashColors.AccentMint
-                                    )
-                                }
+                                Icon(Icons.Outlined.MedicalServices, null,
+                                    Modifier.size(20.dp), tint = PatDashColors.AccentMint)
                             }
-
                             Spacer(Modifier.width(12.dp))
-
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    text       = medico.doctorName,
+                                    medico.doctorName,
                                     fontSize   = 15.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color      = PatDashColors.TextPrimary
                                 )
                                 Text(
-                                    text     = "Vinculado el ${SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(medico.linkedAt))}",
+                                    "Vinculado el ${SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(medico.linkedAt))}",
                                     fontSize = 12.sp,
                                     color    = PatDashColors.TextSecondary
                                 )
@@ -184,14 +153,14 @@ fun PatientDashboardScreen(
 
             // ══ SECCIÓN 3: MI MEDICACIÓN ══
             SectionCard(Icons.Outlined.Medication, "Mi Medicacion", PatDashColors.PurpleBg, PatDashColors.Purple) {
-                EmptyStateBox(Icons.Outlined.Medication, "Sin medicacion asignada", "Cuando tu medico te asigne una pauta, aparecera aqui")
+                EmptyStateBox(Icons.Outlined.Medication, "Sin medicacion asignada",
+                    "Cuando tu medico te asigne una pauta, aparecera aqui")
             }
 
             Spacer(Modifier.height(24.dp))
         }
     }
 
-    // ══ DIÁLOGO QR ══
     if (showQrDialog) {
         SharePatientQrDialog(
             peerId    = dashboardViewModel.activeHost?.peerId?.toString() ?: "sin-nodo",
@@ -207,22 +176,25 @@ private fun SharePatientQrDialog(peerId: String, onDismiss: () -> Unit) {
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = {
-            Text("Tu codigo para el medico", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-        },
+        title = { Text("Tu codigo para el medico", fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
         text = {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Muestra este codigo QR a tu medico para que te vincule", fontSize = 13.sp, color = PatDashColors.TextSecondary, textAlign = TextAlign.Center)
+                Text("Muestra este codigo QR a tu medico para que te vincule",
+                    fontSize = 13.sp, color = PatDashColors.TextSecondary, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(16.dp))
                 if (qrBitmap != null) {
-                    Card(shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(4.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                    Card(shape = RoundedCornerShape(16.dp), elevation = CardDefaults.cardElevation(4.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White)) {
                         Image(qrBitmap.asImageBitmap(), "QR", Modifier.size(240.dp).padding(16.dp))
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                Text(peerId, fontSize = 10.sp, color = PatDashColors.TextSecondary, textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Text(peerId, fontSize = 10.sp, color = PatDashColors.TextSecondary,
+                    textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(12.dp))
-                OutlinedButton(onClick = { clipboardManager.setText(AnnotatedString(peerId)) }, shape = RoundedCornerShape(12.dp)) {
+                OutlinedButton(onClick = { clipboardManager.setText(AnnotatedString(peerId)) },
+                    shape = RoundedCornerShape(12.dp)) {
                     Icon(Icons.Outlined.ContentCopy, null, Modifier.size(16.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Copiar al portapapeles", fontSize = 13.sp)
@@ -243,7 +215,8 @@ private fun PatientHeader(displayName: String, connectionStatus: ConnectionStatu
     ) {
         Column {
             Text(saludoSegunHora(), fontSize = 16.sp, color = Color.White.copy(alpha = 0.8f))
-            Text(displayName.ifBlank { "Paciente" }, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(displayName.ifBlank { "Paciente" }, fontSize = 28.sp, fontWeight = FontWeight.Bold,
+                color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(12.dp))
             val (statusText, statusColor) = when (connectionStatus) {
                 is ConnectionStatus.Connected    -> "Conectado con tu equipo medico" to PatDashColors.AccentMint
@@ -257,7 +230,8 @@ private fun PatientHeader(displayName: String, connectionStatus: ConnectionStatu
                 Text(statusText, fontSize = 14.sp, color = Color.White.copy(alpha = 0.9f))
                 if (connectionStatus is ConnectionStatus.Error || connectionStatus is ConnectionStatus.Disconnected) {
                     Spacer(Modifier.width(8.dp))
-                    TextButton(onClick = onRetry, colors = ButtonDefaults.textButtonColors(contentColor = Color.White)) {
+                    TextButton(onClick = onRetry,
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color.White)) {
                         Text("Conectar", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     }
                 }
@@ -267,11 +241,15 @@ private fun PatientHeader(displayName: String, connectionStatus: ConnectionStatu
 }
 
 @Composable
-private fun SectionCard(icon: ImageVector, title: String, iconBg: Color, iconTint: Color, content: @Composable ColumnScope.() -> Unit) {
-    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(4.dp), colors = CardDefaults.cardColors(containerColor = PatDashColors.CardWhite)) {
+private fun SectionCard(icon: ImageVector, title: String, iconBg: Color, iconTint: Color,
+                        content: @Composable ColumnScope.() -> Unit) {
+    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp),
+        elevation = CardDefaults.cardElevation(4.dp),
+        colors = CardDefaults.cardColors(containerColor = PatDashColors.CardWhite)) {
         Column(Modifier.padding(20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(iconBg), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(iconBg),
+                    contentAlignment = Alignment.Center) {
                     Icon(icon, null, Modifier.size(24.dp), tint = iconTint)
                 }
                 Spacer(Modifier.width(12.dp))
@@ -303,7 +281,9 @@ private fun EmptyStateBox(icon: ImageVector, message: String, hint: String) {
         Icon(icon, null, Modifier.size(36.dp), tint = PatDashColors.DividerLight)
         Spacer(Modifier.height(10.dp))
         Text(message, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = PatDashColors.TextSecondary)
-        Text(hint, fontSize = 13.sp, color = PatDashColors.TextSecondary.copy(alpha = 0.7f), textAlign = TextAlign.Center, lineHeight = 18.sp, modifier = Modifier.padding(top = 4.dp, start = 16.dp, end = 16.dp))
+        Text(hint, fontSize = 13.sp, color = PatDashColors.TextSecondary.copy(alpha = 0.7f),
+            textAlign = TextAlign.Center, lineHeight = 18.sp,
+            modifier = Modifier.padding(top = 4.dp, start = 16.dp, end = 16.dp))
     }
 }
 

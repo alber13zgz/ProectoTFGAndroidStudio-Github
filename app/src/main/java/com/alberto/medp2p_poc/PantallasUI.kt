@@ -103,7 +103,7 @@ data class Paciente(val id: UUID = UUID.randomUUID(), val alias: String, val pee
 sealed class Ruta(val ruta: String, val titulo: String, val icono: androidx.compose.ui.graphics.vector.ImageVector) {
     object Dashboard : Ruta("dashboard", "Inicio", Icons.Default.Home)
     object Directorio : Ruta("directorio", "Pacientes", Icons.Default.AccountBox)
-    object Medicinas : Ruta("medicinas", "Vademécum", Icons.Default.List) // 👉 NUEVA PESTAÑA
+    object Medicinas : Ruta("medicinas", "Vademécum", Icons.Default.List)
     object Chat : Ruta("chat", "Historial", Icons.Default.Send)
 }
 

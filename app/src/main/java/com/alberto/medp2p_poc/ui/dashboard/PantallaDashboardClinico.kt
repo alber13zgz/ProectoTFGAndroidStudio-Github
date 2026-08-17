@@ -68,7 +68,8 @@ private object DashColors {
 fun PantallaDashboardClinico(
     viewModel: DashboardViewModel,
     onNavigateToPatients: () -> Unit = {},
-    onNavigateToProfile: () -> Unit = {}
+    onNavigateToProfile: () -> Unit = {},
+    onNavigateToAlertas: () -> Unit = {}
 ) {
     val data by viewModel.dashboard.collectAsStateWithLifecycle()
 
@@ -133,7 +134,8 @@ fun PantallaDashboardClinico(
                     value = "${alertas.size}",
                     backgroundColor = DashColors.CountCardPurple,
                     iconTint = DashColors.Purple,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f).clickable { onNavigateToAlertas() }
+
                 )
             }
 
@@ -638,7 +640,7 @@ private fun RecentActivityPlaceholder() {
 }
 
 @Composable
-private fun AlertaMedicacionCard(
+internal  fun AlertaMedicacionCard(
     pauta: com.alberto.medp2p_poc.data.model.PautaMedicaV2,
     onSuministrada: () -> Unit
 ) {

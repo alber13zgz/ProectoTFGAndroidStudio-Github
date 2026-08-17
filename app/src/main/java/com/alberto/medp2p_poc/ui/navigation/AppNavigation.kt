@@ -31,6 +31,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.alberto.medp2p_poc.data.model.UserRole
 import com.alberto.medp2p_poc.ui.dashboard.DashboardViewModel
+import com.alberto.medp2p_poc.ui.dashboard.PantallaAlertasPendientes
 import com.alberto.medp2p_poc.ui.dashboard.PantallaDashboardClinico
 import com.alberto.medp2p_poc.ui.patients.PantallaPacientes
 import com.alberto.medp2p_poc.ui.patients.PatientsViewModel
@@ -46,9 +47,7 @@ private object NavColors {
     val SurfaceWhite    = Color(0xFFF8FAFE)
 }
 
-sealed class ProfessionalRoute(
-    val route: String, val title: String, val icon: ImageVector
-) {
+sealed class ProfessionalRoute(val route: String, val title: String, val icon: ImageVector) {
     object Home     : ProfessionalRoute("home",     "Dashboard", Icons.Outlined.Home)
     object Patients : ProfessionalRoute("patients", "Pacientes", Icons.Outlined.People)
 }
@@ -66,72 +65,47 @@ fun ClinicalAppNavigation(
     val dashboardData by dashboardViewModel.dashboard.collectAsStateWithLifecycle()
     val currentName   = dashboardData.displayName.ifBlank { userName }
 
-    val initials = currentName
-        .split(" ").take(2)
-        .mapNotNull { it.firstOrNull()?.uppercase() }
-        .joinToString("")
+    val initials = currentName.split(" ").take(2)
+        .mapNotNull { it.firstOrNull()?.uppercase() }.joinToString("")
 
-    // ── FIX FALLO 1: cargar Bitmap de la foto de perfil reactivamente ──
-    // dashboardData.photoUri es la ruta absoluta en filesDir, estable
-    // entre sesiones. Se recarga con remember(photoUri) cada vez que
-    // el usuario guarda una nueva foto en ProfileScreen.
     val profileBitmap = remember(dashboardData.photoUri) {
-        if (dashboardData.photoUri.isNotBlank()) {
+        if (dashboardData.photoUri.isNotBlank())
             try { BitmapFactory.decodeFile(dashboardData.photoUri) } catch (e: Exception) { null }
-        } else null
+        else null
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        "Hola, $currentName",
+                    Text("Hola, $currentName",
                         style = MaterialTheme.typography.titleMedium,
-                        color = NavColors.PrimaryBlue
-                    )
+                        color = NavColors.PrimaryBlue)
                 },
                 navigationIcon = {
-                    // ── Avatar reactivo: foto si existe, iniciales si no ──
                     Box(
-                        modifier = Modifier
-                            .padding(start = 12.dp)
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(NavColors.PrimaryBlue)
-                            .clickable {
-                                navController.navigate("profile_edit") { launchSingleTop = true }
-                            },
+                        modifier = Modifier.padding(start = 12.dp).size(38.dp)
+                            .clip(CircleShape).background(NavColors.PrimaryBlue)
+                            .clickable { navController.navigate("profile_edit") { launchSingleTop = true } },
                         contentAlignment = Alignment.Center
                     ) {
                         if (profileBitmap != null) {
-                            // Foto de perfil guardada — mostrar imagen
-                            Image(
-                                bitmap             = profileBitmap.asImageBitmap(),
+                            Image(bitmap = profileBitmap.asImageBitmap(),
                                 contentDescription = "Foto de perfil",
-                                modifier           = Modifier.fillMaxSize(),
-                                contentScale       = ContentScale.Crop
-                            )
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop)
                         } else {
-                            // Sin foto — mostrar iniciales
-                            Text(
-                                text       = initials.ifBlank { "?" },
-                                fontSize   = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                color      = Color.White
-                            )
+                            Text(initials.ifBlank { "?" }, fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold, color = Color.White)
                         }
                     }
                 },
-                 actions = {
+                actions = {
                     IconButton(onClick = onCerrarSesion) {
-                       Icon(
-                           imageVector        = Icons.Outlined.ExitToApp,
-                           contentDescription = "Cerrar Sesion",
-                           tint               = MaterialTheme.colorScheme.error
-                       )
-                  }
-                 },
+                        Icon(Icons.Outlined.ExitToApp, "Cerrar Sesion",
+                            tint = MaterialTheme.colorScheme.error)
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = NavColors.SurfaceWhite)
             )
         },
@@ -146,32 +120,19 @@ fun ClinicalAppNavigation(
                 LaunchedEffect(Unit) { dashboardViewModel.refreshCounters() }
                 PantallaDashboardClinico(
                     viewModel            = dashboardViewModel,
-                    onNavigateToPatients = {
-                        navController.navigate("patients") { launchSingleTop = true }
-                    },
-                    onNavigateToProfile  = {
-                        navController.navigate("profile_edit") { launchSingleTop = true }
-                    }
+                    onNavigateToPatients = { navController.navigate("patients") { launchSingleTop = true } },
+                    onNavigateToProfile  = { navController.navigate("profile_edit") { launchSingleTop = true } },
+                    onNavigateToAlertas  = { navController.navigate("alertas_pendientes") { launchSingleTop = true } }
                 )
             }
 
             composable("patients") {
                 val patientsViewModel: PatientsViewModel = viewModel()
-                LaunchedEffect(Unit) {
-                    patientsViewModel.init(dashboardViewModel.currentOwnerPeerId)
-                }
+                LaunchedEffect(Unit) { patientsViewModel.init(dashboardViewModel.currentOwnerPeerId) }
                 PantallaPacientes(
                     viewModel              = patientsViewModel,
-                    onPacienteSeleccionado = { peerId ->
-                        navController.navigate("patient_detail/$peerId")
-                    },
-                    onBack = { navController.popBackStack() }
-                )
-            }
-            composable("alertas_pendientes") {
-                PantallaAlertasPendientes(
-                    viewModel = dashboardViewModel,
-                    onBack    = { navController.popBackStack() }
+                    onPacienteSeleccionado = { peerId -> navController.navigate("patient_detail/$peerId") },
+                    onBack                 = { navController.popBackStack() }
                 )
             }
 
@@ -181,13 +142,11 @@ fun ClinicalAppNavigation(
             ) { backStackEntry ->
                 val peerId          = backStackEntry.arguments?.getString("peerId") ?: ""
                 val detailViewModel: PatientDetailViewModel = viewModel()
-
                 LaunchedEffect(peerId) {
                     val ownerPeerId = dashboardViewModel.currentOwnerPeerId
                     detailViewModel.loadPatientDetail(peerId, ownerPeerId)
                     detailViewModel.observeIncomingMessages(dashboardViewModel, peerId)
                 }
-
                 PantallaDetallePaciente(
                     peerId             = peerId,
                     viewModel          = detailViewModel,
@@ -196,20 +155,26 @@ fun ClinicalAppNavigation(
                 )
             }
 
+            composable("alertas_pendientes") {
+                PantallaAlertasPendientes(
+                    viewModel = dashboardViewModel,
+                    onBack    = { navController.popBackStack() }
+                )
+            }
+
             composable("patient_home") {
                 PatientDashboardScreen(
                     dashboardViewModel  = dashboardViewModel,
                     onCerrarSesion      = onCerrarSesion,
-                    onNavigateToProfile = {
-                        navController.navigate("profile_edit") { launchSingleTop = true }
-                    }
+                    onNavigateToProfile = { navController.navigate("profile_edit") { launchSingleTop = true } }
                 )
             }
 
             composable("profile_edit") {
                 ProfileScreen(
                     dashboardViewModel = dashboardViewModel,
-                    onBack             = { navController.popBackStack() }
+                    onBack             = { navController.popBackStack() },
+                    onCerrarSesion     = onCerrarSesion
                 )
             }
         }

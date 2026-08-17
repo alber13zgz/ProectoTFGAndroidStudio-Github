@@ -878,4 +878,31 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             // db.close()
         }
     }
+    fun eliminarCuentaCompleta(peerId: String) {
+        val db = this.writableDatabase
+        try {
+            db.beginTransaction()
+            db.execSQL("DELETE FROM auth_profile WHERE peerId = ?", arrayOf(peerId))
+            db.execSQL("DELETE FROM medico_vinculado WHERE ownerPeerId = ?", arrayOf(peerId))
+            db.execSQL("DELETE FROM historial_clinico WHERE ownerPeerId = ?", arrayOf(peerId))
+            db.execSQL("DELETE FROM paciente_clinico WHERE ownerPeerId = ?", arrayOf(peerId))
+            db.setTransactionSuccessful()
+            Log.i("P2P_TFG", "[DB] Cuenta eliminada: $peerId")
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun desvincularPaciente(patientPeerId: String, ownerPeerId: String) {
+        val db = this.writableDatabase
+        try {
+            db.execSQL(
+                "DELETE FROM paciente_clinico WHERE peerId = ? AND ownerPeerId = ?",
+                arrayOf(patientPeerId, ownerPeerId)
+            )
+            Log.i("P2P_TFG", "[DB] Paciente desvinculado: $patientPeerId de owner=$ownerPeerId")
+        } finally {
+            // db.close()
+        }
+    }
 }

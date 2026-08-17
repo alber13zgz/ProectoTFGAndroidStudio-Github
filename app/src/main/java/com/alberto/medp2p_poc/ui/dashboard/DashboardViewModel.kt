@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import com.alberto.medp2p_poc.data.db.AppDatabaseHelper.MedicoVinculado
+
 
 sealed class ConnectionStatus {
     object Disconnected : ConnectionStatus()
@@ -263,7 +265,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    suspend fun getMedicosVinculados(): List<Triple<String, String, Long>> =
+    suspend fun getMedicosVinculados(): List<MedicoVinculado> =
         withContext(Dispatchers.IO) {
             try {
                 dbHelper.obtenerMedicosVinculados(_dashboard.value.ownerPeerId)
@@ -350,5 +352,27 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         activeHost = null
         storedPrivateKey = null
         _dashboard.value = DashboardData()
+    }
+    fun eliminarCuenta(onComplete: () -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val myPeerId = _dashboard.value.ownerPeerId
+            val node     = activeHost
+
+            // Notificar a cada médico vinculado antes de borrar datos
+            if (node != null) {
+                val medicos = dbHelper.obtenerMedicosVinculados(myPeerId)
+                medicos.forEach { medico ->
+                    val destAddr = "$RELAY_BASE/p2p-circuit/p2p/${medico.doctorPeerId}"
+                    try {
+                        messagingService.sendUnlinkPatientMessage(node, destAddr, myPeerId)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error notificando desvinculacion a ${medico.doctorPeerId}: ${e.message}")
+                    }
+                }
+            }
+            dbHelper.eliminarCuentaCompleta(myPeerId)
+            Log.i(TAG, "Cuenta eliminada: $myPeerId")
+            withContext(Dispatchers.Main) { onComplete() }
+        }
     }
 }

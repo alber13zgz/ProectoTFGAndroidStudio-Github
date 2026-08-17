@@ -90,6 +90,9 @@ data class SuministroPayload(
     val timestampSuministro: Long
 )
 
+@Serializable
+data class UnlinkPatientPayload(val patientPeerId: String)
+
 class P2PMessagingService(
     private val context: Context,
     private val dbHelper: AppDatabaseHelper
@@ -105,6 +108,7 @@ class P2PMessagingService(
         const val TYPE_LINK_DOCTOR    = "LINK_DOCTOR"
         const val TYPE_SEND_PAUTA       = "SEND_PAUTA"
         const val TYPE_SUMINISTRO_PAUTA = "SUMINISTRO_PAUTA"
+        const val TYPE_UNLINK_PATIENT   = "UNLINK_PATIENT"
     }
 
     private val _incomingMessages = MutableSharedFlow<MedicalRecord>(
@@ -148,6 +152,7 @@ class P2PMessagingService(
                                 TYPE_LINK_DOCTOR      -> handleLinkDoctor(ctx, jsonString)
                                 TYPE_SEND_PAUTA       -> handleSendPauta(ctx, jsonString)
                                 TYPE_SUMINISTRO_PAUTA -> handleSuministroPauta(ctx, jsonString)
+                                TYPE_UNLINK_PATIENT   -> handleUnlinkPatient(ctx, jsonString)
                                 else -> Log.w(TAG, "[RECEPTOR] Tipo desconocido: $type.")
                             }
                         } catch (e: Exception) {
@@ -257,6 +262,22 @@ class P2PMessagingService(
             }
         } catch (e: Exception) {
             Log.e(TAG, "[RECEPTOR] Error procesando SUMINISTRO_PAUTA: ${e.message}")
+        }
+    }
+
+    private fun handleUnlinkPatient(ctx: ChannelHandlerContext, jsonString: String) {
+        try {
+            val envelope      = json.decodeFromString<P2PEnvelope>(jsonString)
+            val decryptedJson = CryptoUtils.decrypt(envelope.payload, ownerPeerId)
+            val payload       = json.decodeFromString<UnlinkPatientPayload>(decryptedJson)
+            serviceScope.launch {
+                dbHelper.desvincularPaciente(payload.patientPeerId, ownerPeerId)
+                Log.i(TAG, "[RECEPTOR] Paciente desvinculado: ${payload.patientPeerId.take(12)}")
+                _syncEvents.emit(System.currentTimeMillis())
+                sendAck(ctx)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "[RECEPTOR] Error procesando UNLINK_PATIENT: ${e.message}")
         }
     }
 
@@ -448,5 +469,23 @@ class P2PMessagingService(
     fun shutdown() {
         serviceScope.cancel()
         Log.i(TAG, "[SHUTDOWN] Servicio detenido.")
+    }
+
+    suspend fun sendUnlinkPatientMessage(
+        host: Host,
+        destinationCircuitAddr: String,
+        patientPeerId: String
+    ): Unit = withContext(Dispatchers.IO) {
+        val destPeerId       = destinationCircuitAddr.substringAfterLast("/")
+        val payloadJson      = json.encodeToString(UnlinkPatientPayload(patientPeerId))
+        val encryptedPayload = CryptoUtils.encrypt(payloadJson, destPeerId)
+        val envelope = P2PEnvelope(
+            type         = TYPE_UNLINK_PATIENT,
+            destPeerId   = destPeerId,
+            senderPeerId = ownerPeerId,
+            payload      = encryptedPayload
+        )
+        Log.i(TAG, "[UNLINK] Enviando desvinculacion a $destPeerId")
+        sendEnvelope(host, json.encodeToString(envelope), patientPeerId)
     }
 }

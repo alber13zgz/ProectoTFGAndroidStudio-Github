@@ -10,7 +10,7 @@ data class PautaMedicaV2(
     val doctorCreatorPeerId: String,
     val medicacion: String,
     val dosis: String,
-    val frecuenciaDiaria: Int,
+    val intervaloHoras: Int,
     val fechaInicio: Long,
     val fechaFin: Long
 )
@@ -21,5 +21,8 @@ data class RegistroSuministro(
     val pautaId: String,
     val patientPeerId: String,
     val doctorAdministeredPeerId: String,
-    val timestampSuministro: Long = System.currentTimeMillis()
+    val timestampSuministro: Long = System.currentTimeMillis(),
+    val temperatura: Float? = null,
+    val sintomas: String? = null,
+    val notas: String? = null
 )

@@ -103,12 +103,12 @@ fun PantallaDetallePaciente(
                 onAddPrescription = { medId, hours ->
                     viewModel.addPrescription(peerId, medId, hours)
                 },
-                onAddPauta = { medicacion, dosis, frecuencia, fechaInicio, fechaFin ->
+                onAddPauta = { medicacion, dosis, intervalo, fechaInicio, fechaFin -> // <-- CAMBIADO
                     dashboardViewModel.crearPauta(
                         patientPeerId    = peerId,
                         medicacion       = medicacion,
                         dosis            = dosis,
-                        frecuenciaDiaria = frecuencia,
+                        intervaloHoras   = intervalo, // <-- CAMBIADO
                         fechaInicio      = fechaInicio,
                         fechaFin         = fechaFin
                     )
@@ -129,7 +129,7 @@ private fun PatientDetailContent(
     onBack: () -> Unit,
     onAddNote: (String) -> Unit,
     onAddPrescription: (medicamentoId: String, intervaloHoras: Int) -> Unit,
-    onAddPauta: (medicacion: String, dosis: String, frecuencia: Int, fechaInicio: Long, fechaFin: Long) -> Unit
+    onAddPauta: (medicacion: String, dosis: String, intervalo: Int, fechaInicio: Long, fechaFin: Long) -> Unit // <-- CAMBIADO
 ) {
     val tabs = listOf(
         TabInfo("Datos",      Icons.Outlined.Person),
@@ -193,8 +193,8 @@ private fun PatientDetailContent(
             NuevaPautaPacienteBottomSheet(
                 patientName = patient.fullName,
                 onDismiss   = { showNuevaPautaSheet = false },
-                onConfirm   = { medicacion, dosis, frecuencia, fechaInicio, fechaFin ->
-                    onAddPauta(medicacion, dosis, frecuencia, fechaInicio, fechaFin)
+                onConfirm   = { medicacion, dosis, intervalo, fechaInicio, fechaFin -> // <-- CAMBIADO
+                    onAddPauta(medicacion, dosis, intervalo, fechaInicio, fechaFin)
                     showNuevaPautaSheet = false
                 }
             )
@@ -516,7 +516,7 @@ private fun PautaActivaCard(pauta: com.alberto.medp2p_poc.data.model.PautaMedica
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(pauta.medicacion, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = DetailColors.TextPrimary)
-                Text("${pauta.dosis}  ·  ${pauta.frecuenciaDiaria}x/día", fontSize = 12.sp, color = DetailColors.TextSecondary)
+                Text("${pauta.dosis}  ·  Cada ${pauta.intervaloHoras} horas", fontSize = 12.sp, color = DetailColors.TextSecondary) // <-- CAMBIADO
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.CalendarToday, null, Modifier.size(12.dp), tint = urgencyColor)
@@ -534,11 +534,11 @@ private fun PautaActivaCard(pauta: com.alberto.medp2p_poc.data.model.PautaMedica
 private fun NuevaPautaPacienteBottomSheet(
     patientName: String,
     onDismiss: () -> Unit,
-    onConfirm: (medicacion: String, dosis: String, frecuencia: Int, fechaInicio: Long, fechaFin: Long) -> Unit
+    onConfirm: (medicacion: String, dosis: String, intervalo: Int, fechaInicio: Long, fechaFin: Long) -> Unit // <-- CAMBIADO
 ) {
     var medicacion       by remember { mutableStateOf("") }
     var dosis            by remember { mutableStateOf("") }
-    var frecuenciaText   by remember { mutableStateOf("1") }
+    var intervaloText    by remember { mutableStateOf("8") } // <-- CAMBIADO
     var duracionDiasText by remember { mutableStateOf("") }
 
     val context = LocalContext.current
@@ -568,9 +568,9 @@ private fun NuevaPautaPacienteBottomSheet(
                 singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
 
             OutlinedTextField(
-                value = frecuenciaText,
-                onValueChange = { if (it.all(Char::isDigit) && it.length <= 2) frecuenciaText = it },
-                label = { Text("Frecuencia diaria (veces/dia)") },
+                value = intervaloText, // <-- CAMBIADO
+                onValueChange = { if (it.all(Char::isDigit) && it.length <= 2) intervaloText = it },
+                label = { Text("Intervalo de tomas (cada X horas)") }, // <-- CAMBIADO
                 singleLine = true,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
@@ -592,17 +592,17 @@ private fun NuevaPautaPacienteBottomSheet(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            val frecuencia   = frecuenciaText.toIntOrNull() ?: 0
+            val intervalo    = intervaloText.toIntOrNull() ?: 0 // <-- CAMBIADO
             val duracionDias = duracionDiasText.toIntOrNull() ?: 0
             val formValid    = medicacion.isNotBlank()
-                    && dosis.isNotBlank() && frecuencia > 0 && duracionDias > 0
+                    && dosis.isNotBlank() && intervalo > 0 && duracionDias > 0 // <-- CAMBIADO
 
             Button(
                 onClick = {
                     if (formValid) {
                         val fechaInicio = System.currentTimeMillis()
                         val fechaFin    = fechaInicio + (duracionDias * 86_400_000L)
-                        onConfirm(medicacion, dosis, frecuencia, fechaInicio, fechaFin)
+                        onConfirm(medicacion, dosis, intervalo, fechaInicio, fechaFin) // <-- CAMBIADO
                         Toast.makeText(context, "Pauta creada correctamente", Toast.LENGTH_SHORT).show()
                     } else {
                         Toast.makeText(context, "Falta rellenar algún campo obligatorio", Toast.LENGTH_SHORT).show()

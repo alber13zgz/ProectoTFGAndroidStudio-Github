@@ -209,7 +209,7 @@ private fun AuthHeader() {
         }
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "MedP2P",
+            text = "DosisControl",
             fontSize = 28.sp,
             fontWeight = FontWeight.Bold,
             color = ClinicalColors.TextOnPrimary
@@ -275,7 +275,7 @@ private fun RegistrationCard(
                 value = name,
                 onValueChange = { name = it },
                 label = { Text("Nombre completo") },
-                placeholder = { Text("Ej: Dra. Maria Lopez") },
+                placeholder = { Text("Ej: Dra. Natalia Rodriguez") },
                 leadingIcon = {
                     Icon(Icons.Outlined.Person, null, tint = ClinicalColors.PrimaryBlue)
                 },
@@ -332,7 +332,7 @@ private fun RegistrationCard(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "Cual es tu perfil?",
+                text = "¿Cual es tu perfil?",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = ClinicalColors.TextPrimary,
@@ -347,7 +347,7 @@ private fun RegistrationCard(
             ) {
                 RoleCard(
                     icon = Icons.Outlined.MedicalServices,
-                    label = "Profesional",
+                    label = "Cuidador",
                     subtitle = "Sanitario",
                     isSelected = selectedRole == UserRole.PROFESSIONAL,
                     onClick = { selectedRole = UserRole.PROFESSIONAL },

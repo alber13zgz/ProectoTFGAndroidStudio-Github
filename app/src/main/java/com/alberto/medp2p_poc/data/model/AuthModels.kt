@@ -32,7 +32,7 @@ data class AuthProfile(
 }
 
 enum class UserRole(val displayLabel: String) {
-    PROFESSIONAL("Profesional sanitario"),
+    PROFESSIONAL("Cuidador"),
     PATIENT("Paciente");
 
     companion object {

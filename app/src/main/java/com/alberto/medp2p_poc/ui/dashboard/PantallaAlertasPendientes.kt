@@ -85,8 +85,8 @@ fun PantallaAlertasPendientes(
                     AlertaMedicacionCard(
                         pauta          = pauta,
                         patientName    = nombrePaciente, // <--- 3. Pasamos el nombre requerido
-                        onSuministrada = {
-                            viewModel.registrarSuministro(pauta.id, pauta.patientPeerId)
+                        onSuministrada = { temp, sintomas, notas -> // <--- ESTA ES LA ÚNICA LÍNEA CORREGIDA
+                            viewModel.registrarSuministro(pauta.id, pauta.patientPeerId, temp, sintomas, notas)
                         }
                     )
                 }

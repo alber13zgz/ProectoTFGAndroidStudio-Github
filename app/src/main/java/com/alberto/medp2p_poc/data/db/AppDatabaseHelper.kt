@@ -24,7 +24,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     companion object {
         const val DATABASE_NAME = "medp2p_offline.db"
-        const val DATABASE_VERSION = 5
+        const val DATABASE_VERSION = 7
     }
 
     data class MedicoVinculado(
@@ -191,7 +191,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 doctorCreatorPeerId TEXT NOT NULL,
                 medicacion TEXT NOT NULL,
                 dosis TEXT NOT NULL,
-                frecuenciaDiaria INTEGER NOT NULL,
+                intervaloHoras INTEGER NOT NULL,
                 fechaInicio INTEGER NOT NULL,
                 fechaFin INTEGER NOT NULL
             )
@@ -207,6 +207,9 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 patientPeerId TEXT NOT NULL,
                 doctorAdministeredPeerId TEXT NOT NULL,
                 timestampSuministro INTEGER NOT NULL,
+                temperatura REAL,       
+                sintomas TEXT,           
+                notas TEXT,             
                 FOREIGN KEY(pautaId) REFERENCES pauta_medica_v2(id) ON DELETE CASCADE
             )
         """.trimIndent())
@@ -678,11 +681,11 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         try {
             db.execSQL(
                 """INSERT OR REPLACE INTO pauta_medica_v2
-                   (id, patientPeerId, doctorCreatorPeerId, medicacion, dosis, frecuenciaDiaria, fechaInicio, fechaFin)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (id, patientPeerId, doctorCreatorPeerId, medicacion, dosis, intervaloHoras, fechaInicio, fechaFin)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 arrayOf(
                     pauta.id, pauta.patientPeerId, pauta.doctorCreatorPeerId,
-                    pauta.medicacion, pauta.dosis, pauta.frecuenciaDiaria,
+                    pauta.medicacion, pauta.dosis, pauta.intervaloHoras, // <-- CORREGIDO
                     pauta.fechaInicio, pauta.fechaFin
                 )
             )
@@ -697,8 +700,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         try {
             db.execSQL(
                 """INSERT INTO registro_suministro
-                   (id, pautaId, patientPeerId, doctorAdministeredPeerId, timestampSuministro)
-                   VALUES (?, ?, ?, ?, ?)""",
+                    (id, pautaId, patientPeerId, doctorAdministeredPeerId, timestampSuministro, temperatura, sintomas, notas)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 arrayOf(
                     registro.id, registro.pautaId, registro.patientPeerId,
                     registro.doctorAdministeredPeerId, registro.timestampSuministro
@@ -726,7 +729,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
         val cursor = db.rawQuery("""
             SELECT p.id, p.patientPeerId, p.doctorCreatorPeerId,
-                   p.medicacion, p.dosis, p.frecuenciaDiaria, p.fechaInicio, p.fechaFin
+                   p.medicacion, p.dosis, p.intervaloHoras, p.fechaInicio, p.fechaFin
             FROM pauta_medica_v2 p
             INNER JOIN paciente_clinico pc
                 ON pc.peerId = p.patientPeerId
@@ -753,7 +756,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                         doctorCreatorPeerId = cursor.getString(2),
                         medicacion          = cursor.getString(3),
                         dosis               = cursor.getString(4),
-                        frecuenciaDiaria    = cursor.getInt(5),
+                        intervaloHoras      = cursor.getInt(5), // <-- CAMBIADO: Antes frecuenciaDiaria
                         fechaInicio         = cursor.getLong(6),
                         fechaFin            = cursor.getLong(7)
                     ))
@@ -835,10 +838,10 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
         android.util.Log.d("P2P_DEBUG", "[DB] Buscando pautas directas para patientPeerId=$patientPeerId")
 
-        // He quitado el INNER JOIN. Ahora buscamos directamente en pauta_medica_v2
+        // Sustituido frecuenciaDiaria por intervaloHoras
         val cursor = db.rawQuery("""
         SELECT id, patientPeerId, doctorCreatorPeerId,
-               medicacion, dosis, frecuenciaDiaria, fechaInicio, fechaFin
+               medicacion, dosis, intervaloHoras, fechaInicio, fechaFin
         FROM pauta_medica_v2
         WHERE patientPeerId = ?
           AND fechaFin >= ?
@@ -856,7 +859,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                         doctorCreatorPeerId = cursor.getString(2),
                         medicacion          = cursor.getString(3),
                         dosis               = cursor.getString(4),
-                        frecuenciaDiaria    = cursor.getInt(5),
+                        intervaloHoras      = cursor.getInt(5), // <-- CAMBIADO: Antes frecuenciaDiaria
                         fechaInicio         = cursor.getLong(6),
                         fechaFin            = cursor.getLong(7)
                     )
@@ -871,6 +874,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         }
         return lista
     }
+
     fun actualizarFotoPaciente(peerId: String, ownerPeerId: String, photoUri: String) {
         val db = this.writableDatabase
         try {

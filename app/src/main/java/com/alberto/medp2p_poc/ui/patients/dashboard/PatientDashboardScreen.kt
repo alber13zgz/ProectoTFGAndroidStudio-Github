@@ -87,7 +87,7 @@ fun PatientDashboardScreen(
             ) {
                 Icon(Icons.Outlined.QrCode, null, Modifier.size(22.dp))
                 Spacer(Modifier.width(10.dp))
-                Text("Compartir mi ID con un Medico", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text("Compartir mi ID con un Cuidador", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
 
             // ══ SECCIÓN 1: MI PERFIL ══
@@ -109,7 +109,7 @@ fun PatientDashboardScreen(
             }
 
             // ══ SECCIÓN 2: MIS MÉDICOS — sin foto, igual que antes ══
-            SectionCard(Icons.Outlined.MedicalServices, "Mis Medicos", PatDashColors.AccentMintBg, PatDashColors.AccentMint) {
+            SectionCard(Icons.Outlined.MedicalServices, "Mis Cuidadores", PatDashColors.AccentMintBg, PatDashColors.AccentMint) {
                 if (medicos.isEmpty()) {
                     EmptyStateBox(Icons.Outlined.MedicalServices,
                         "Aun no tienes medicos vinculados",
@@ -184,11 +184,11 @@ private fun SharePatientQrDialog(peerId: String, onDismiss: () -> Unit) {
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Tu codigo para el medico", fontWeight = FontWeight.Bold,
+        title = { Text("Tu codigo para el cuidador", fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
         text = {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Muestra este codigo QR a tu medico para que te vincule",
+                Text("Muestra este  QR a tu cuidador para que te vincule",
                     fontSize = 13.sp, color = PatDashColors.TextSecondary, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(16.dp))
                 if (qrBitmap != null) {
@@ -227,7 +227,7 @@ private fun PatientHeader(displayName: String, connectionStatus: ConnectionStatu
                 color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(12.dp))
             val (statusText, statusColor) = when (connectionStatus) {
-                is ConnectionStatus.Connected    -> "Conectado con tu equipo medico" to PatDashColors.AccentMint
+                is ConnectionStatus.Connected    -> "Conectado con tu equipo de cuidadores" to PatDashColors.AccentMint
                 is ConnectionStatus.Connecting   -> "Conectando..." to PatDashColors.WarningAmber
                 is ConnectionStatus.Error        -> "Sin conexion. Tus datos estan seguros." to PatDashColors.ErrorRed
                 is ConnectionStatus.Disconnected -> "Sin conexion" to PatDashColors.WarningAmber
@@ -307,7 +307,7 @@ private fun PautaPacienteCard(pauta: com.alberto.medp2p_poc.data.model.PautaMedi
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
         Column(Modifier.padding(14.dp)) {
             Text(pauta.medicacion, fontWeight = FontWeight.Bold)
-            Text("${pauta.dosis} · ${pauta.frecuenciaDiaria}x al día", fontSize = 12.sp)
+            Text("${pauta.dosis} · Cada ${pauta.intervaloHoras} horas", fontSize = 12.sp) // <-- AQUI EL CAMBIO
         }
     }
 }

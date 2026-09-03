@@ -309,7 +309,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         patientPeerId: String,
         medicacion: String,
         dosis: String,
-        frecuenciaDiaria: Int,
+        intervaloHoras: Int, // <-- CAMBIADO: Antes frecuenciaDiaria
         fechaInicio: Long,
         fechaFin: Long
     ) {
@@ -320,7 +320,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 doctorCreatorPeerId = owner,
                 medicacion          = medicacion,
                 dosis               = dosis,
-                frecuenciaDiaria    = frecuenciaDiaria,
+                intervaloHoras      = intervaloHoras, // <-- CAMBIADO
                 fechaInicio         = fechaInicio,
                 fechaFin            = fechaFin
             )
@@ -334,13 +334,22 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun registrarSuministro(pautaId: String, patientPeerId: String) {
+    fun registrarSuministro(
+        pautaId: String,
+        patientPeerId: String,
+        temperatura: Float? = null, // <-- NUEVO: Para enviar la fiebre si la hay
+        sintomas: String? = null,   // <-- NUEVO: Para enviar los checkbox
+        notas: String? = null       // <-- NUEVO: Para notas libres
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
             val owner = _dashboard.value.ownerPeerId
             val registro = com.alberto.medp2p_poc.data.model.RegistroSuministro(
                 pautaId                  = pautaId,
                 patientPeerId            = patientPeerId,
-                doctorAdministeredPeerId = owner
+                doctorAdministeredPeerId = owner,
+                temperatura              = temperatura, // <-- NUEVO
+                sintomas                 = sintomas,    // <-- NUEVO
+                notas                    = notas        // <-- NUEVO
             )
             dbHelper.insertarRegistroSuministro(registro)
             loadAlertasPendientes()

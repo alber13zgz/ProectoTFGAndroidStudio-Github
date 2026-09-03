@@ -150,14 +150,15 @@ fun PantallaDashboardClinico(
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
                 alertas.forEach { pauta ->
-                    // Buscamos el nombre del paciente utilizando su peerId
                     val pacienteAsociado = pacientes.find { it.peerId == pauta.patientPeerId }
                     val nombrePaciente = pacienteAsociado?.fullName ?: "Paciente desconocido"
 
                     AlertaMedicacionCard(
-                        pauta = pauta,
-                        patientName = nombrePaciente,
-                        onSuministrada = { viewModel.registrarSuministro(pauta.id, pauta.patientPeerId) }
+                        pauta          = pauta,
+                        patientName    = nombrePaciente,
+                        onSuministrada = { temp, sintomas, notas -> // <-- AÑADIDO: Recibe los 3 parámetros del formulario
+                            viewModel.registrarSuministro(pauta.id, pauta.patientPeerId, temp, sintomas, notas) // <-- AÑADIDO: Los pasa al ViewModel
+                        }
                     )
                     Spacer(Modifier.height(8.dp))
                 }
@@ -211,19 +212,6 @@ fun PantallaDashboardClinico(
             )
 
             Spacer(modifier = Modifier.height(20.dp))
-
-
-
-            Text(
-                text = "Actividad reciente",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = DashColors.TextPrimary,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-
-            RecentActivityPlaceholder()
-            Spacer(modifier = Modifier.height(32.dp))
         }
     }
 
@@ -319,12 +307,12 @@ fun PantallaDashboardClinico(
         NuevaPautaBottomSheet(
             pacientes = pacientes,
             onDismiss = { showNuevaPautaSheet = false },
-            onConfirm = { patientPeerId, medicacion, dosis, frecuencia, fechaInicio, fechaFin ->
+            onConfirm = { patientPeerId, medicacion, dosis, frecuencia, fechaInicio, fechaFin -> // <-- CAMBIADO el parámetro a frecuencia(intervaloHoras)
                 viewModel.crearPauta(
                     patientPeerId    = patientPeerId,
                     medicacion       = medicacion,
                     dosis            = dosis,
-                    frecuenciaDiaria = frecuencia,
+                    intervaloHoras   = frecuencia, // <-- CAMBIADO: Antes pasaba a frecuenciaDiaria
                     fechaInicio      = fechaInicio,
                     fechaFin         = fechaFin
                 )
@@ -332,7 +320,6 @@ fun PantallaDashboardClinico(
             }
         )
     }
-
 
     if (showErrorNoPacientes) {
         AlertDialog(
@@ -386,6 +373,7 @@ fun PantallaDashboardClinico(
         )
     }
 }
+
 @Composable
 private fun LinkOptionCard(
     icon: ImageVector,
@@ -629,115 +617,18 @@ private fun QuickActionCard(icon: ImageVector, title: String, subtitle: String,
 }
 
 @Composable
-private fun RecentActivityPlaceholder() {
-    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(2.dp),
-        colors = CardDefaults.cardColors(containerColor = DashColors.CardWhite)) {
-        Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Outlined.History, null, Modifier.size(36.dp), tint = DashColors.DividerLight)
-            Spacer(Modifier.height(12.dp))
-            Text("Sin actividad reciente", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = DashColors.TextSecondary)
-            Text("Las sincronizaciones con pacientes apareceran aqui", fontSize = 12.sp,
-                color = DashColors.TextSecondary.copy(alpha = 0.7f), textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 4.dp))
-        }
-    }
-}
-
-@Composable
-/*internal  fun AlertaMedicacionCard(
-    pauta: com.alberto.medp2p_poc.data.model.PautaMedicaV2,
-    onSuministrada: () -> Unit
-) {
-    var showConfirmDialog by remember { mutableStateOf(false) }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(3.dp),
-        colors = CardDefaults.cardColors(containerColor = DashColors.CardWhite)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
-                    .background(DashColors.WarningAmberBg),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.Medication, null, Modifier.size(22.dp), tint = DashColors.WarningAmber)
-            }
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(pauta.medicacion, fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold, color = DashColors.TextPrimary)
-                Text("Dosis: ${pauta.dosis}  ·  ${pauta.frecuenciaDiaria}x/día",
-                    fontSize = 12.sp, color = DashColors.TextSecondary)
-            }
-            Spacer(Modifier.width(8.dp))
-            Button(
-                onClick = { showConfirmDialog = true },
-                shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = DashColors.AccentMint)
-            ) {
-                Text("Suministrada", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-
-    if (showConfirmDialog) {
-        AlertDialog(
-            onDismissRequest = { showConfirmDialog = false },
-            icon = {
-                Box(
-                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
-                        .background(DashColors.AccentMint.copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Outlined.CheckCircle, null,
-                        Modifier.size(26.dp), tint = DashColors.AccentMint)
-                }
-            },
-            title = {
-                Text("Confirmar suministro", fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-            },
-            text = {
-                Text(
-                    "¿Marcar ${pauta.medicacion} como administrada hoy? " +
-                            "Esta accion quedara registrada en el historial del paciente.",
-                    fontSize = 14.sp, color = DashColors.TextSecondary,
-                    textAlign = TextAlign.Center, lineHeight = 20.sp
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = { onSuministrada(); showConfirmDialog = false },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = DashColors.AccentMint),
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Si, registrar", fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { showConfirmDialog = false },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Cancelar", color = DashColors.TextSecondary) }
-            },
-            shape = RoundedCornerShape(24.dp),
-            containerColor = DashColors.CardWhite
-        )
-    }
-}*/
-
 internal fun AlertaMedicacionCard(
     pauta: com.alberto.medp2p_poc.data.model.PautaMedicaV2,
-    patientName: String, // <--- 1. Añadimos el parámetro con el nombre del paciente
-    onSuministrada: () -> Unit
+    patientName: String,
+    onSuministrada: (Float?, String?, String?) -> Unit // <-- CAMBIADO: Acepta los parámetros opcionales
 ) {
     var showConfirmDialog by remember { mutableStateOf(false) }
+
+    // <-- NUEVO: Estados para el formulario opcional
+    var temperaturaText by remember { mutableStateOf("") }
+    var notasText by remember { mutableStateOf("") }
+    val posiblesSintomas = listOf("Dolor de garganta", "Dolor de cabeza", "Tos", "Afonía", "Cansancio", "Diarrea", "Vómitos")
+    val sintomasSeleccionados = remember { mutableStateListOf<String>() }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -764,15 +655,15 @@ internal fun AlertaMedicacionCard(
                     fontWeight = FontWeight.SemiBold,
                     color = DashColors.TextPrimary
                 )
-                // ── 2. MOSTRAMOS EL NOMBRE DEL PACIENTE EN LA TARJETA ──
                 Text(
                     text = "Paciente: $patientName",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     color = DashColors.PrimaryBlue
                 )
+                // <-- CAMBIADO: Muestra "Cada X horas"
                 Text(
-                    text = "Dosis: ${pauta.dosis}  ·  ${pauta.frecuenciaDiaria}x/día",
+                    text = "Dosis: ${pauta.dosis}  ·  Cada ${pauta.intervaloHoras} horas",
                     fontSize = 11.sp,
                     color = DashColors.TextSecondary
                 )
@@ -792,36 +683,70 @@ internal fun AlertaMedicacionCard(
     if (showConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showConfirmDialog = false },
-            icon = {
-                Box(
-                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
-                        .background(DashColors.AccentMint.copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Outlined.CheckCircle, null,
-                        Modifier.size(26.dp), tint = DashColors.AccentMint)
-                }
-            },
             title = {
-                Text("Confirmar suministro", fontWeight = FontWeight.Bold,
+                Text("Registrar toma", fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             },
+            // <-- NUEVO: Formulario clínico en el Dialog
             text = {
-                // ── 3. TAMBIÉN LO INCLUIMOS EN EL DIÁLOGO DE CONFIRMACIÓN ──
-                Text(
-                    text = "¿Marcar ${pauta.medicacion} como administrada hoy para $patientName? " +
-                            "Esta accion quedara registrada en el historial del paciente.",
-                    fontSize = 14.sp, color = DashColors.TextSecondary,
-                    textAlign = TextAlign.Center, lineHeight = 20.sp
-                )
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("¿Confirmar que $patientName ha tomado ${pauta.medicacion}?", fontSize = 14.sp)
+                    Divider(color = DashColors.DividerLight, modifier = Modifier.padding(vertical = 8.dp))
+                    Text("Registro clinico (Opcional)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+
+                    OutlinedTextField(
+                        value = temperaturaText,
+                        onValueChange = { temperaturaText = it },
+                        label = { Text("Temperatura (ºC)") },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text("Sintomas observados:", fontSize = 12.sp, color = DashColors.TextSecondary)
+                    posiblesSintomas.forEach { sintoma ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                if (sintomasSeleccionados.contains(sintoma)) sintomasSeleccionados.remove(sintoma)
+                                else sintomasSeleccionados.add(sintoma)
+                            }
+                        ) {
+                            Checkbox(
+                                checked = sintomasSeleccionados.contains(sintoma),
+                                onCheckedChange = { checked ->
+                                    if (checked) sintomasSeleccionados.add(sintoma) else sintomasSeleccionados.remove(sintoma)
+                                }
+                            )
+                            Text(sintoma, fontSize = 14.sp)
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = notasText,
+                        onValueChange = { notasText = it },
+                        label = { Text("Otras notas libres") },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             },
             confirmButton = {
                 Button(
-                    onClick = { onSuministrada(); showConfirmDialog = false },
-                    shape = RoundedCornerShape(12.dp),
+                    onClick = {
+                        val temp = temperaturaText.replace(",", ".").toFloatOrNull()
+                        val sintomasFinales = if (sintomasSeleccionados.isNotEmpty()) sintomasSeleccionados.joinToString(", ") else null
+                        val notasFinales = notasText.takeIf { it.isNotBlank() }
+                        onSuministrada(temp, sintomasFinales, notasFinales)
+                        showConfirmDialog = false
+                    },
                     colors = ButtonDefaults.buttonColors(containerColor = DashColors.AccentMint),
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Si, registrar", fontWeight = FontWeight.Bold) }
+                ) { Text("Confirmar y Guardar", fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
                 TextButton(
@@ -834,6 +759,7 @@ internal fun AlertaMedicacionCard(
         )
     }
 }
+
 private data class SyncCardData(val bg: Color, val tint: Color, val icon: ImageVector, val title: String, val subtitle: String)
 
 private fun saludoSegunHora(): String {
@@ -856,7 +782,7 @@ private fun NuevaPautaBottomSheet(
     var dropdownExpanded by remember { mutableStateOf(false) }
     var medicacion       by remember { mutableStateOf("") }
     var dosis            by remember { mutableStateOf("") }
-    var frecuenciaText   by remember { mutableStateOf("1") }
+    var frecuenciaText   by remember { mutableStateOf("8") } // <-- CAMBIADO el valor inicial por defecto (8 horas suele ser lo típico)
     var duracionDiasText by remember { mutableStateOf("") }
 
     val context = LocalContext.current
@@ -911,7 +837,7 @@ private fun NuevaPautaBottomSheet(
             OutlinedTextField(
                 value = frecuenciaText,
                 onValueChange = { if (it.all(Char::isDigit) && it.length <= 2) frecuenciaText = it },
-                label = { Text("Frecuencia diaria (veces/dia)") },
+                label = { Text("Intervalo de tomas (cada X horas)") }, // <-- CAMBIADO el texto
                 singleLine = true,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
@@ -945,11 +871,10 @@ private fun NuevaPautaBottomSheet(
                         val fechaFin    = fechaInicio + (duracionDias * 86_400_000L)
                         onConfirm(selectedPatient!!.peerId, medicacion, dosis, frecuencia, fechaInicio, fechaFin)
                     } else {
-                        // Si te falta un campo, ahora el móvil te lo chivará
-                        Toast.makeText(context, "Falta rellenar algún campo o seleccionar paciente", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Falta rellenar algun campo o seleccionar paciente", Toast.LENGTH_SHORT).show()
                     }
                 },
-                enabled  = true, // ARREGLO: Lo forzamos a true para que siempre reaccione
+                enabled  = true,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape    = RoundedCornerShape(16.dp),
                 colors   = ButtonDefaults.buttonColors(containerColor = DashColors.AccentMint)

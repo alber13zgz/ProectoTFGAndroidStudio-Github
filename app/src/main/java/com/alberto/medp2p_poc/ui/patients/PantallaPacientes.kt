@@ -86,15 +86,32 @@ fun PantallaPacientes(
     LaunchedEffect(Unit) { viewModel.loadPatients() }
 
     Scaffold(
-        topBar = {
+        /*topBar = {
             TopAppBar(
-                title = { Text("Mis Pacientes", fontWeight = FontWeight.Bold) },
+                title = //{ Text("Mis Pacientes", fontWeight = FontWeight.Bold) } // ,
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Outlined.ArrowBack, contentDescription = "Volver")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = PatColors.SurfaceWhite)
+            )
+        },*/
+        topBar = {
+            TopAppBar(
+                title = { }, // Lo dejamos vacío para no duplicar el de tu cabecera azul
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.Outlined.ArrowBack,
+                            contentDescription = "Volver",
+                            tint = Color.White // Ponemos la flecha en blanco para que contraste
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = PatColors.PrimaryBlue // Mismo azul que el inicio de tu gradiente
+                )
             )
         },
         floatingActionButton = {

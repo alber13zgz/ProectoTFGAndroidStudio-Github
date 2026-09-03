@@ -76,7 +76,7 @@ data class PautaPayload(
     val doctorCreatorPeerId: String,
     val medicacion: String,
     val dosis: String,
-    val frecuenciaDiaria: Int,
+    val intervaloHoras: Int, // <-- CORREGIDO A INTERVALO
     val fechaInicio: Long,
     val fechaFin: Long
 )
@@ -87,7 +87,10 @@ data class SuministroPayload(
     val pautaId: String,
     val patientPeerId: String,
     val doctorAdministeredPeerId: String,
-    val timestampSuministro: Long
+    val timestampSuministro: Long,
+    val temperatura: Float? = null, // <-- NUEVO: Pasa por red
+    val sintomas: String? = null,   // <-- NUEVO: Pasa por red
+    val notas: String? = null       // <-- NUEVO: Pasa por red
 )
 
 @Serializable
@@ -175,10 +178,6 @@ class P2PMessagingService(
     private fun handleMedicalRecord(ctx: ChannelHandlerContext, jsonString: String) {
         val record = try {
             val envelope = json.decodeFromString<P2PEnvelope>(jsonString)
-            // La clave se deriva del senderPeerId — mismo valor que usó el emisor
-            // al cifrar con CryptoUtils.encrypt(recordJson, destPeerId=ESTE_NODO)
-            // Como la clave se deriva del peerId del DESTINATARIO, y aquí somos
-            // el destinatario, usamos nuestro ownerPeerId para descifrar.
             val decryptedJson = CryptoUtils.decrypt(envelope.payload, ownerPeerId)
             json.decodeFromString<MedicalRecord>(decryptedJson)
         } catch (e: Exception) {
@@ -198,7 +197,6 @@ class P2PMessagingService(
     private fun handleLinkDoctor(ctx: ChannelHandlerContext, jsonString: String) {
         try {
             val envelope = json.decodeFromString<P2PEnvelope>(jsonString)
-            // Mismo razonamiento: somos el destinatario, usamos ownerPeerId
             val decryptedJson = CryptoUtils.decrypt(envelope.payload, ownerPeerId)
             val payload = json.decodeFromString<LinkDoctorPayload>(decryptedJson)
 
@@ -229,7 +227,7 @@ class P2PMessagingService(
                         id = p.id, patientPeerId = p.patientPeerId,
                         doctorCreatorPeerId = p.doctorCreatorPeerId,
                         medicacion = p.medicacion, dosis = p.dosis,
-                        frecuenciaDiaria = p.frecuenciaDiaria,
+                        intervaloHoras = p.intervaloHoras, // <-- CORREGIDO
                         fechaInicio = p.fechaInicio, fechaFin = p.fechaFin
                     )
                 )
@@ -253,7 +251,10 @@ class P2PMessagingService(
                         id = s.id, pautaId = s.pautaId,
                         patientPeerId = s.patientPeerId,
                         doctorAdministeredPeerId = s.doctorAdministeredPeerId,
-                        timestampSuministro = s.timestampSuministro
+                        timestampSuministro = s.timestampSuministro,
+                        temperatura = s.temperatura, // <-- NUEVO GUARDADO LOCAL
+                        sintomas = s.sintomas,       // <-- NUEVO GUARDADO LOCAL
+                        notas = s.notas              // <-- NUEVO GUARDADO LOCAL
                     )
                 )
                 Log.i(TAG, "[RECEPTOR] RegistroSuministro guardado: pauta=${s.pautaId.take(8)}")
@@ -329,7 +330,6 @@ class P2PMessagingService(
 
         val destPeerId       = destinationCircuitAddr.substringAfterLast("/")
         val recordJson       = json.encodeToString(record)
-        // Cifrar con la clave derivada del peerId del destinatario
         val encryptedPayload = CryptoUtils.encrypt(recordJson, destPeerId)
 
         val envelope = P2PEnvelope(
@@ -375,7 +375,7 @@ class P2PMessagingService(
             id = pauta.id, patientPeerId = pauta.patientPeerId,
             doctorCreatorPeerId = pauta.doctorCreatorPeerId,
             medicacion = pauta.medicacion, dosis = pauta.dosis,
-            frecuenciaDiaria = pauta.frecuenciaDiaria,
+            intervaloHoras = pauta.intervaloHoras, // <-- CORREGIDO EN ENVÍO
             fechaInicio = pauta.fechaInicio, fechaFin = pauta.fechaFin
         ))
         val encryptedPayload = CryptoUtils.encrypt(payloadJson, destPeerId)
@@ -398,7 +398,10 @@ class P2PMessagingService(
             id = registro.id, pautaId = registro.pautaId,
             patientPeerId = registro.patientPeerId,
             doctorAdministeredPeerId = registro.doctorAdministeredPeerId,
-            timestampSuministro = registro.timestampSuministro
+            timestampSuministro = registro.timestampSuministro,
+            temperatura = registro.temperatura, // <-- NUEVO EN ENVÍO
+            sintomas = registro.sintomas,       // <-- NUEVO EN ENVÍO
+            notas = registro.notas              // <-- NUEVO EN ENVÍO
         ))
         val encryptedPayload = CryptoUtils.encrypt(payloadJson, destPeerId)
         val envelope = P2PEnvelope(

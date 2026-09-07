@@ -83,4 +83,7 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.4.0")
     implementation("androidx.camera:camera-view:1.4.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.0")
+    implementation ("net.zetetic:android-database-sqlcipher:4.5.4")
+    implementation("net.zetetic:android-database-sqlcipher:4.5.4")
+    implementation("androidx.sqlite:sqlite:2.3.1")
 }

@@ -194,7 +194,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 keyVault.clearVault()
-                val db = dbHelper.writableDatabase
+                val db = dbHelper.getWritableDatabase("MiClaveSeguraKeystore_TFG")
                 listOf("medico_vinculado", "paciente_clinico", "historial_clinico",
                     "sync_log", "toma_diaria", "pauta_medica", "auth_profile")
                     .forEach { db.execSQL("DELETE FROM $it") }
@@ -226,7 +226,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 _uiState.value = AuthUiState.Processing("Eliminando perfil anterior...")
                 keyVault.clearVault()
-                dbHelper.writableDatabase.apply {
+                dbHelper.getWritableDatabase("MiClaveSeguraKeystore_TFG").apply {
                     execSQL("DELETE FROM auth_profile")
                     close()
                 }

@@ -1,9 +1,9 @@
 package com.alberto.medp2p_poc.data.db
 
 import android.content.Context
-import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteOpenHelper
 import android.util.Log
+import net.sqlcipher.database.SQLiteDatabase
+import net.sqlcipher.database.SQLiteOpenHelper
 
 // ════════════════════════════════════════════════════════════════
 // VERSIÓN 5 — Cambios respecto a v4:
@@ -25,6 +25,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     companion object {
         const val DATABASE_NAME = "medp2p_offline.db"
         const val DATABASE_VERSION = 7
+    }init {
+        SQLiteDatabase.loadLibs(context)
     }
 
     data class MedicoVinculado(
@@ -235,7 +237,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     // ══════════════════════════════════════════════════════════════
 
     fun getAuthProfile(): com.alberto.medp2p_poc.data.model.AuthProfile? {
-        val db = this.readableDatabase
+        val db = this.getReadableDatabase("MiClaveSeguraKeystore_TFG")
         val cursor = db.rawQuery("SELECT * FROM auth_profile LIMIT 1", null)
         return try {
             if (cursor.moveToFirst()) {
@@ -256,7 +258,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun insertAuthProfile(profile: com.alberto.medp2p_poc.data.model.AuthProfile) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 """INSERT INTO auth_profile
@@ -275,7 +277,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun actualizarPerfil(peerId: String, nuevoNombre: String, photoUri: String) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 "UPDATE auth_profile SET displayName = ?, photoUri = ? WHERE peerId = ?",
@@ -288,7 +290,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun actualizarUltimoLogin(peerId: String) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 "UPDATE auth_profile SET lastLoginAt = ? WHERE peerId = ?",
@@ -307,7 +309,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         record: com.alberto.medp2p_poc.data.model.MedicalRecord,
         ownerPeerId: String = ""
     ) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         val isMineInt = if (record.isMine) 1 else 0
         try {
             db.execSQL(
@@ -327,7 +329,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         ownerPeerId: String
     ): List<com.alberto.medp2p_poc.data.model.MedicalRecord> {
         val lista = mutableListOf<com.alberto.medp2p_poc.data.model.MedicalRecord>()
-        val db = this.readableDatabase
+        val db = this.getReadableDatabase("MiClaveSeguraKeystore_TFG")
         val cursor = db.rawQuery(
             """SELECT id, patientId, text, timestamp, isMine, senderAlias
                FROM historial_clinico
@@ -363,7 +365,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         patient: com.alberto.medp2p_poc.data.model.Patient,
         ownerPeerId: String
     ) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 """INSERT OR REPLACE INTO paciente_clinico
@@ -384,7 +386,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     fun obtenerPacientesClinico(ownerPeerId: String): List<com.alberto.medp2p_poc.data.model.Patient> {
         val lista = mutableListOf<com.alberto.medp2p_poc.data.model.Patient>()
-        val db = this.readableDatabase
+        val db = this.getReadableDatabase("MiClaveSeguraKeystore_TFG")
         // ── AÑADIDO 'photoUri' al final del SELECT para que existan las 10 columnas (0 a 9) ──
         val cursor = db.rawQuery(
             """SELECT id, fullName, peerId, allergies, notes, linkedAt,
@@ -420,7 +422,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         peerId: String,
         ownerPeerId: String
     ): com.alberto.medp2p_poc.data.model.Patient? {
-        val db = this.readableDatabase
+        val db = this.getReadableDatabase("MiClaveSeguraKeystore_TFG")
         val cursor = db.rawQuery(
             """SELECT id, fullName, peerId, allergies, notes, linkedAt,
                   lastSyncAt, isFavorite, avatarColorIndex, photoUri
@@ -450,7 +452,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun toggleFavoritoPaciente(patientId: String) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 "UPDATE paciente_clinico SET isFavorite = CASE WHEN isFavorite=1 THEN 0 ELSE 1 END WHERE id=?",
@@ -462,7 +464,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun eliminarPacienteClinico(patientId: String) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL("DELETE FROM paciente_clinico WHERE id = ?", arrayOf(patientId))
         } finally {
@@ -471,7 +473,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun actualizarDatosPaciente(peerId: String, ownerPeerId: String, allergies: String, notes: String) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 "UPDATE paciente_clinico SET allergies=?, notes=? WHERE peerId=? AND ownerPeerId=?",
@@ -484,7 +486,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     // Actualiza solo allergies sin tocar notes — usado desde ProfileScreen del paciente
     fun actualizarAlergiasPaciente(peerId: String, ownerPeerId: String, allergies: String) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 "UPDATE paciente_clinico SET allergies = ? WHERE peerId = ? AND ownerPeerId = ?",
@@ -505,7 +507,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         ownerPeerId: String,
         doctorPhotoUri: String = ""
     ) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 """INSERT OR REPLACE INTO medico_vinculado
@@ -523,7 +525,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     fun obtenerMedicosVinculados(ownerPeerId: String): List<MedicoVinculado> {
         val lista = mutableListOf<MedicoVinculado>()
-        val db = this.readableDatabase
+        val db = this.getReadableDatabase("MiClaveSeguraKeystore_TFG")
         val cursor = db.rawQuery(
             "SELECT doctorPeerId, doctorName, linkedAt, doctorPhotoUri FROM medico_vinculado WHERE ownerPeerId = ? ORDER BY linkedAt DESC",
             arrayOf(ownerPeerId)
@@ -550,7 +552,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     // ══════════════════════════════════════════════════════════════
 
     fun insertarMedicamento(med: com.alberto.medp2p_poc.data.model.Medicamento) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 "INSERT INTO medicamento (idMedicamento, nombreComercial, principleActivo, concentracionMg, stockActual) VALUES (?, ?, ?, ?, ?)",
@@ -563,7 +565,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     fun obtenerVademecum(): List<com.alberto.medp2p_poc.data.model.Medicamento> {
         val lista = mutableListOf<com.alberto.medp2p_poc.data.model.Medicamento>()
-        val db = this.readableDatabase
+        val db = this.getReadableDatabase("MiClaveSeguraKeystore_TFG")
         val cursor = db.rawQuery("SELECT * FROM medicamento ORDER BY nombreComercial ASC", null)
         try {
             if (cursor.moveToFirst()) {
@@ -588,7 +590,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         pacientePeerId: String
     ): List<com.alberto.medp2p_poc.ui.patients.detail.ActiveMedication> {
         val lista = mutableListOf<com.alberto.medp2p_poc.ui.patients.detail.ActiveMedication>()
-        val db = this.readableDatabase
+        val db = this.getReadableDatabase("MiClaveSeguraKeystore_TFG")
         val cursor = db.rawQuery(
             """SELECT m.idMedicamento, m.nombreComercial, m.principleActivo,
                       m.concentracionMg, m.stockActual,
@@ -630,7 +632,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun insertarPautaMedica(pauta: com.alberto.medp2p_poc.data.model.PautaMedica) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 "INSERT INTO pauta_medica (idPauta, pacienteId, medicamentoId, intervaloHoras) VALUES (?, ?, ?, ?)",
@@ -646,7 +648,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     // ══════════════════════════════════════════════════════════════
 
     fun enqueueSyncLog(recordId: String, tabla: String, accion: String, ownerPeerId: String = "") {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 """INSERT INTO sync_log
@@ -660,7 +662,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun updateSyncLogStatus(recordId: String, nuevaAccion: String) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 """UPDATE sync_log SET accion=?, timestampModificacion=?
@@ -677,7 +679,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     // ══════════════════════════════════════════════════════════════
 
     fun insertarPautaMedicaV2(pauta: com.alberto.medp2p_poc.data.model.PautaMedicaV2) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 """INSERT OR REPLACE INTO pauta_medica_v2
@@ -696,7 +698,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun insertarRegistroSuministro(registro: com.alberto.medp2p_poc.data.model.RegistroSuministro) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 """INSERT INTO registro_suministro
@@ -717,7 +719,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     // excluyendo las que ya tienen suministro registrado hoy.
     fun obtenerAlertasPendientesHoy(doctorPeerId: String): List<com.alberto.medp2p_poc.data.model.PautaMedicaV2> {
         val lista = mutableListOf<com.alberto.medp2p_poc.data.model.PautaMedicaV2>()
-        val db = this.readableDatabase
+        val db = this.getReadableDatabase("MiClaveSeguraKeystore_TFG")
 
         val cal = java.util.Calendar.getInstance()
         cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
@@ -774,7 +776,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     // ══════════════════════════════════════════════════════════════
 
     fun registrarMiPerfilLocal(peerId: String, nombre: String, esCuidador: Boolean) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 "INSERT INTO usuario (peerId, nombre, fechaRegistro) VALUES (?, ?, ?)",
@@ -791,7 +793,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     fun obtenerTodosLosPacientes(): List<com.alberto.medp2p_poc.Paciente> {
         val lista = mutableListOf<com.alberto.medp2p_poc.Paciente>()
-        val db = this.readableDatabase
+        val db = this.getReadableDatabase("MiClaveSeguraKeystore_TFG")
         val cursor = db.rawQuery(
             "SELECT u.peerId, u.nombre FROM paciente p INNER JOIN usuario u ON p.usuarioPeerId = u.peerId",
             null
@@ -813,7 +815,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun vincularPacienteExterno(peerId: String, alias: String) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.beginTransaction()
             db.execSQL(
@@ -833,7 +835,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         ownerPeerId: String
     ): List<com.alberto.medp2p_poc.data.model.PautaMedicaV2> {
         val lista = mutableListOf<com.alberto.medp2p_poc.data.model.PautaMedicaV2>()
-        val db    = this.readableDatabase
+        val db    = this.getReadableDatabase("MiClaveSeguraKeystore_TFG")
         val ahora = System.currentTimeMillis()
 
         android.util.Log.d("P2P_DEBUG", "[DB] Buscando pautas directas para patientPeerId=$patientPeerId")
@@ -876,7 +878,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun actualizarFotoPaciente(peerId: String, ownerPeerId: String, photoUri: String) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 "UPDATE paciente_clinico SET photoUri = ? WHERE peerId = ? AND ownerPeerId = ?",
@@ -888,7 +890,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         }
     }
     fun eliminarCuentaCompleta(peerId: String) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.beginTransaction()
             db.execSQL("DELETE FROM auth_profile WHERE peerId = ?", arrayOf(peerId))
@@ -903,7 +905,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun desvincularPaciente(patientPeerId: String, ownerPeerId: String) {
-        val db = this.writableDatabase
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
         try {
             db.execSQL(
                 "DELETE FROM paciente_clinico WHERE peerId = ? AND ownerPeerId = ?",

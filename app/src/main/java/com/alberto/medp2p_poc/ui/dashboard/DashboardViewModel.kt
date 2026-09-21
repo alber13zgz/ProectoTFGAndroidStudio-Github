@@ -397,4 +397,76 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             withContext(Dispatchers.Main) { onComplete() }
         }
     }
+    // ══════════════════════════════════════════════════════════════
+    // ══ LÓGICA DE ESCANEO DE FÁRMACOS (HÍBRIDA) ═══════════════════
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Procesa un código de barras escaneado (EAN/UPC).
+     * Sigue la arquitectura Híbrida/Offline-First:
+     * 1. Consulta SQLite (Caché local ultrarrápida).
+     * 2. Si no existe, consulta API pública (AEMPS) en 2º plano.
+     * 3. Si la API responde, guarda en caché y devuelve el nombre.
+     * 4. Si falla (sin red o desconocido), devuelve null.
+     */
+    suspend fun procesarCodigoEscaneado(codigoBarras: String): String? {
+        return withContext(Dispatchers.IO) {
+            // 1. Intento Local (Offline puro)
+            val nombreLocal = dbHelper.obtenerNombreMedicamentoLocal(codigoBarras)
+            if (nombreLocal != null) {
+                Log.d(TAG, "[SCAN] Fármaco encontrado en CACHÉ LOCAL: $nombreLocal")
+                return@withContext nombreLocal
+            }
+
+            // 2. Intento de Red (API CIMA)
+            Log.d(TAG, "[SCAN] Fármaco no cacheado. Consultando API CIMA...")
+            try {
+                // El Código Nacional (CN) español de 6 cifras suele estar en las posiciones 7-12 de un EAN-13
+                val cn = if (codigoBarras.startsWith("847000") && codigoBarras.length == 13) {
+                    codigoBarras.substring(6, 12)
+                } else {
+                    codigoBarras
+                }
+
+                val url = java.net.URL("https://cima.aemps.es/cima/rest/medicamento?cn=$cn")
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 3000 // 3 segundos max para no colgar la UI si no hay cobertura
+                connection.readTimeout = 3000
+
+                if (connection.responseCode == 200) {
+                    val json = connection.inputStream.bufferedReader().use { it.readText() }
+                    // Expresión regular limpia para extraer el "nombre" del JSON sin meter librerías pesadas
+                    val regex = """"nombre"\s*:\s*"([^"]+)"""".toRegex()
+                    val match = regex.find(json)
+                    val nombreApi = match?.groupValues?.get(1)
+
+                    if (nombreApi != null) {
+                        Log.d(TAG, "[SCAN] Fármaco encontrado en API: $nombreApi")
+                        // 3. Guardamos en caché para que el próximo escaneo sea 100% offline
+                        dbHelper.guardarMedicamentoLocal(codigoBarras, nombreApi)
+                        return@withContext nombreApi
+                    }
+                }
+
+                // Si la API no lo encuentra (o responde un 404)
+                Log.w(TAG, "[SCAN] Fármaco desconocido para la API.")
+                return@withContext null
+
+            } catch (e: Exception) {
+                Log.e(TAG, "[SCAN] Error de red o API no disponible: ${e.message}")
+                return@withContext null // Forzamos el Fallback manual pidiendo el nombre al usuario
+            }
+        }
+    }
+
+    /**
+     * Llamada manual desde la UI cuando la API falla y el cuidador escribe el nombre a mano.
+     */
+    fun guardarFarmacoManual(codigoBarras: String, nombreManual: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dbHelper.guardarMedicamentoLocal(codigoBarras, nombreManual)
+            Log.i(TAG, "[SCAN] Fármaco introducido y guardado manualmente: $nombreManual")
+        }
+    }
 }

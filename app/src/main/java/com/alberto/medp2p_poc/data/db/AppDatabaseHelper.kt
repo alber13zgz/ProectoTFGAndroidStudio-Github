@@ -916,4 +916,51 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             // db.close()
         }
     }
+    // ══════════════════════════════════════════════════════════════
+    // ══ DICCIONARIO LOCAL DE FÁRMACOS (Offline-First) ═══════════
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Busca si un código de barras ya fue registrado previamente en la base de datos local.
+     * Esto permite que la app funcione sin conexión si el fármaco ya es conocido.
+     */
+    fun obtenerNombreMedicamentoLocal(codigoBarras: String): String? {
+        val db = this.getReadableDatabase("MiClaveSeguraKeystore_TFG")
+        val cursor = db.rawQuery(
+            "SELECT nombreComercial FROM medicamento WHERE idMedicamento = ? LIMIT 1",
+            arrayOf(codigoBarras)
+        )
+        return try {
+            if (cursor.moveToFirst()) {
+                cursor.getString(0)
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e("P2P_TFG", "[DB] Error buscando medicamento: ${e.message}")
+            null
+        } finally {
+            cursor.close()
+        }
+    }
+
+    /**
+     * Guarda un nuevo fármaco (obtenido de la API de CIMA o insertado a mano) en la base de datos local.
+     * Utiliza INSERT OR REPLACE por si el usuario actualiza el nombre de un código existente.
+     */
+    fun guardarMedicamentoLocal(codigoBarras: String, nombre: String) {
+        val db = this.getWritableDatabase("MiClaveSeguraKeystore_TFG")
+        try {
+            db.execSQL(
+                """INSERT OR REPLACE INTO medicamento 
+                   (idMedicamento, nombreComercial, principleActivo, concentracionMg, stockActual) 
+                   VALUES (?, ?, ?, ?, ?)""",
+                // Pasamos valores por defecto ("", 0.0f y 0) a los campos que no necesitamos para este flujo
+                arrayOf(codigoBarras, nombre, "", 0.0f, 0)
+            )
+            Log.i("P2P_TFG", "[DB] Fármaco registrado en caché local: $nombre ($codigoBarras)")
+        } catch (e: Exception) {
+            Log.e("P2P_TFG", "[DB] Error guardando medicamento: ${e.message}")
+        }
+    }
 }

@@ -42,6 +42,7 @@ import java.util.Locale
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
+import kotlinx.coroutines.launch
 
 private object DashColors {
     val PrimaryBlue = Color(0xFF005FB8)
@@ -305,6 +306,7 @@ fun PantallaDashboardClinico(
 
     if (showNuevaPautaSheet) {
         NuevaPautaBottomSheet(
+            viewModel = viewModel, // <-- AÑADIDO: Pasamos el ViewModel a la nueva función
             pacientes = pacientes,
             onDismiss = { showNuevaPautaSheet = false },
             onConfirm = { patientPeerId, medicacion, dosis, frecuencia, fechaInicio, fechaFin -> // <-- CAMBIADO el parámetro a frecuencia(intervaloHoras)
@@ -774,6 +776,7 @@ private fun formatTimestamp(timestamp: Long): String {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NuevaPautaBottomSheet(
+    viewModel: DashboardViewModel, // <-- Recibimos el ViewModel
     pacientes: List<com.alberto.medp2p_poc.data.model.Patient>,
     onDismiss: () -> Unit,
     onConfirm: (patientPeerId: String, medicacion: String, dosis: String, frecuencia: Int, fechaInicio: Long, fechaFin: Long) -> Unit
@@ -782,10 +785,30 @@ private fun NuevaPautaBottomSheet(
     var dropdownExpanded by remember { mutableStateOf(false) }
     var medicacion       by remember { mutableStateOf("") }
     var dosis            by remember { mutableStateOf("") }
-    var frecuenciaText   by remember { mutableStateOf("8") } // <-- CAMBIADO el valor inicial por defecto (8 horas suele ser lo típico)
+    var frecuenciaText   by remember { mutableStateOf("8") }
     var duracionDiasText by remember { mutableStateOf("") }
 
+    // ── NUEVOS ESTADOS PARA EL ESCÁNER HÍBRIDO ──
+    var isSearchingDrug by remember { mutableStateOf(false) }
+    var showManualDrugDialog by remember { mutableStateOf(false) }
+    var pendingBarcode by remember { mutableStateOf("") }
+    var manualDrugName by remember { mutableStateOf("") }
+
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    // Configuración del Escáner EXCLUSIVA para códigos de cajas de medicamentos
+    val medScannerOptions = remember {
+        GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(
+                Barcode.FORMAT_EAN_13,
+                Barcode.FORMAT_EAN_8,
+                Barcode.FORMAT_UPC_A
+            )
+            .enableAutoZoom()
+            .build()
+    }
+    val medScanner = remember(context) { GmsBarcodeScanning.getClient(context, medScannerOptions) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -826,9 +849,58 @@ private fun NuevaPautaBottomSheet(
                 }
             }
 
-            OutlinedTextField(value = medicacion, onValueChange = { medicacion = it },
-                label = { Text("Medicacion") }, placeholder = { Text("Ej: Ibuprofeno") },
-                singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            // ── CAMPO DE MEDICACIÓN CON ESCÁNER ──
+            OutlinedTextField(
+                value = medicacion,
+                onValueChange = { medicacion = it },
+                label = { Text("Medicacion") },
+                placeholder = { Text("Ej: Ibuprofeno o escanear caja") },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth(),
+                trailingIcon = {
+                    if (isSearchingDrug) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = DashColors.PrimaryBlue
+                        )
+                    } else {
+                        IconButton(onClick = {
+                            medScanner.startScan()
+                                .addOnSuccessListener { barcode ->
+                                    val raw = barcode.rawValue
+                                    if (!raw.isNullOrBlank()) {
+                                        isSearchingDrug = true // Empezamos a buscar
+                                        coroutineScope.launch {
+                                            // Llamamos al flujo Híbrido (Caché -> API)
+                                            val nombreResuelto = viewModel.procesarCodigoEscaneado(raw)
+                                            isSearchingDrug = false
+
+                                            if (nombreResuelto != null) {
+                                                medicacion = nombreResuelto
+                                            } else {
+                                                // Fallback: No encontrado, pedimos nombre a mano
+                                                pendingBarcode = raw
+                                                manualDrugName = ""
+                                                showManualDrugDialog = true
+                                            }
+                                        }
+                                    }
+                                }
+                                .addOnFailureListener {
+                                    Toast.makeText(context, "Error abriendo el escáner", Toast.LENGTH_SHORT).show()
+                                }
+                        }) {
+                            Icon(
+                                imageVector = Icons.Outlined.QrCodeScanner,
+                                contentDescription = "Escanear caja de medicamento",
+                                tint = DashColors.PrimaryBlue
+                            )
+                        }
+                    }
+                }
+            )
 
             OutlinedTextField(value = dosis, onValueChange = { dosis = it },
                 label = { Text("Dosis") }, placeholder = { Text("Ej: 400mg") },
@@ -837,7 +909,7 @@ private fun NuevaPautaBottomSheet(
             OutlinedTextField(
                 value = frecuenciaText,
                 onValueChange = { if (it.all(Char::isDigit) && it.length <= 2) frecuenciaText = it },
-                label = { Text("Intervalo de tomas (cada X horas)") }, // <-- CAMBIADO el texto
+                label = { Text("Intervalo de tomas (cada X horas)") },
                 singleLine = true,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
@@ -874,7 +946,7 @@ private fun NuevaPautaBottomSheet(
                         Toast.makeText(context, "Falta rellenar algun campo o seleccionar paciente", Toast.LENGTH_SHORT).show()
                     }
                 },
-                enabled  = true,
+                enabled  = !isSearchingDrug,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape    = RoundedCornerShape(16.dp),
                 colors   = ButtonDefaults.buttonColors(containerColor = DashColors.AccentMint)
@@ -884,5 +956,54 @@ private fun NuevaPautaBottomSheet(
                 Text("Crear Pauta", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
         }
+    }
+
+    // ── DIÁLOGO FALLBACK: Introducción manual del fármaco ──
+    if (showManualDrugDialog) {
+        AlertDialog(
+            onDismissRequest = { showManualDrugDialog = false },
+            title = {
+                Text("Medicamento no identificado", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Código detectado: $pendingBarcode\nIntroduce el nombre comercial para asociarlo a este código en tu base de datos local:",
+                        fontSize = 13.sp, color = DashColors.TextSecondary
+                    )
+                    OutlinedTextField(
+                        value = manualDrugName,
+                        onValueChange = { manualDrugName = it },
+                        label = { Text("Nombre del medicamento") },
+                        placeholder = { Text("Ej: Paracetamol 1g") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (manualDrugName.isNotBlank()) {
+                            // Lo guardamos en SQLite y actualizamos el campo visual
+                            viewModel.guardarFarmacoManual(pendingBarcode, manualDrugName.trim())
+                            medicacion = manualDrugName.trim()
+                            showManualDrugDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = DashColors.PrimaryBlue)
+                ) {
+                    Text("Asociar y usar", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showManualDrugDialog = false }) {
+                    Text("Cancelar", color = DashColors.TextSecondary)
+                }
+            },
+            shape = RoundedCornerShape(20.dp),
+            containerColor = DashColors.CardWhite
+        )
     }
 }

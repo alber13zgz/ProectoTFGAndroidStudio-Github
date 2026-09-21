@@ -36,6 +36,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+// ── IMPORTS DEL ESCÁNER (AÑADIDOS) ──
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.google.mlkit.vision.barcode.common.Barcode
+
 private const val RELAY_BASE_ADDR =
     "/ip4/13.48.59.216/tcp/4001/p2p/12D3KooWEBiChhAXXnZRPoM37aoawZbYQKp7WxqtC7LrfZFab4TV"
 
@@ -86,6 +91,7 @@ fun PantallaDetallePaciente(
         }
         state.patient != null -> {
             PatientDetailContent(
+                dashboardViewModel = dashboardViewModel, // <-- AÑADIDO: Pasamos el ViewModel para el escáner
                 patient       = state.patient!!,
                 medications   = state.activeMedications,
                 pautasActivas = state.pautasActivas,
@@ -103,12 +109,12 @@ fun PantallaDetallePaciente(
                 onAddPrescription = { medId, hours ->
                     viewModel.addPrescription(peerId, medId, hours)
                 },
-                onAddPauta = { medicacion, dosis, intervalo, fechaInicio, fechaFin -> // <-- CAMBIADO
+                onAddPauta = { medicacion, dosis, intervalo, fechaInicio, fechaFin ->
                     dashboardViewModel.crearPauta(
                         patientPeerId    = peerId,
                         medicacion       = medicacion,
                         dosis            = dosis,
-                        intervaloHoras   = intervalo, // <-- CAMBIADO
+                        intervaloHoras   = intervalo,
                         fechaInicio      = fechaInicio,
                         fechaFin         = fechaFin
                     )
@@ -122,6 +128,7 @@ fun PantallaDetallePaciente(
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun PatientDetailContent(
+    dashboardViewModel: DashboardViewModel, // <-- AÑADIDO
     patient: Patient,
     medications: List<ActiveMedication>,
     pautasActivas: List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>,
@@ -129,7 +136,7 @@ private fun PatientDetailContent(
     onBack: () -> Unit,
     onAddNote: (String) -> Unit,
     onAddPrescription: (medicamentoId: String, intervaloHoras: Int) -> Unit,
-    onAddPauta: (medicacion: String, dosis: String, intervalo: Int, fechaInicio: Long, fechaFin: Long) -> Unit // <-- CAMBIADO
+    onAddPauta: (medicacion: String, dosis: String, intervalo: Int, fechaInicio: Long, fechaFin: Long) -> Unit
 ) {
     val tabs = listOf(
         TabInfo("Datos",      Icons.Outlined.Person),
@@ -191,9 +198,10 @@ private fun PatientDetailContent(
 
         if (showNuevaPautaSheet) {
             NuevaPautaPacienteBottomSheet(
+                viewModel   = dashboardViewModel, // <-- AÑADIDO
                 patientName = patient.fullName,
                 onDismiss   = { showNuevaPautaSheet = false },
-                onConfirm   = { medicacion, dosis, intervalo, fechaInicio, fechaFin -> // <-- CAMBIADO
+                onConfirm   = { medicacion, dosis, intervalo, fechaInicio, fechaFin ->
                     onAddPauta(medicacion, dosis, intervalo, fechaInicio, fechaFin)
                     showNuevaPautaSheet = false
                 }
@@ -516,7 +524,7 @@ private fun PautaActivaCard(pauta: com.alberto.medp2p_poc.data.model.PautaMedica
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(pauta.medicacion, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = DetailColors.TextPrimary)
-                Text("${pauta.dosis}  ·  Cada ${pauta.intervaloHoras} horas", fontSize = 12.sp, color = DetailColors.TextSecondary) // <-- CAMBIADO
+                Text("${pauta.dosis}  ·  Cada ${pauta.intervaloHoras} horas", fontSize = 12.sp, color = DetailColors.TextSecondary)
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.CalendarToday, null, Modifier.size(12.dp), tint = urgencyColor)
@@ -532,16 +540,37 @@ private fun PautaActivaCard(pauta: com.alberto.medp2p_poc.data.model.PautaMedica
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NuevaPautaPacienteBottomSheet(
+    viewModel: DashboardViewModel, // <-- AÑADIDO
     patientName: String,
     onDismiss: () -> Unit,
-    onConfirm: (medicacion: String, dosis: String, intervalo: Int, fechaInicio: Long, fechaFin: Long) -> Unit // <-- CAMBIADO
+    onConfirm: (medicacion: String, dosis: String, intervalo: Int, fechaInicio: Long, fechaFin: Long) -> Unit
 ) {
     var medicacion       by remember { mutableStateOf("") }
     var dosis            by remember { mutableStateOf("") }
-    var intervaloText    by remember { mutableStateOf("8") } // <-- CAMBIADO
+    var intervaloText    by remember { mutableStateOf("8") }
     var duracionDiasText by remember { mutableStateOf("") }
 
+    // ── ESTADOS DEL ESCÁNER HÍBRIDO ──
+    var isSearchingDrug by remember { mutableStateOf(false) }
+    var showManualDrugDialog by remember { mutableStateOf(false) }
+    var pendingBarcode by remember { mutableStateOf("") }
+    var manualDrugName by remember { mutableStateOf("") }
+
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    // Configuración del Escáner de Códigos de Barras
+    val medScannerOptions = remember {
+        GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(
+                Barcode.FORMAT_EAN_13,
+                Barcode.FORMAT_EAN_8,
+                Barcode.FORMAT_UPC_A
+            )
+            .enableAutoZoom()
+            .build()
+    }
+    val medScanner = remember(context) { GmsBarcodeScanning.getClient(context, medScannerOptions) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -559,18 +588,64 @@ private fun NuevaPautaPacienteBottomSheet(
                 fontWeight = FontWeight.Bold, color = DetailColors.TextPrimary)
             Text("Asignando pauta para: $patientName", fontSize = 12.sp, color = DetailColors.PrimaryBlue, fontWeight = FontWeight.SemiBold)
 
-            OutlinedTextField(value = medicacion, onValueChange = { medicacion = it },
-                label = { Text("Medicacion") }, placeholder = { Text("Ej: Ibuprofeno") },
-                singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
+            // ── CAMPO DE MEDICACIÓN CON ESCÁNER ──
+            OutlinedTextField(
+                value = medicacion,
+                onValueChange = { medicacion = it },
+                label = { Text("Medicacion") },
+                placeholder = { Text("Ej: Ibuprofeno o escanear caja") },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth(),
+                trailingIcon = {
+                    if (isSearchingDrug) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = DetailColors.PrimaryBlue
+                        )
+                    } else {
+                        IconButton(onClick = {
+                            medScanner.startScan()
+                                .addOnSuccessListener { barcode ->
+                                    val raw = barcode.rawValue
+                                    if (!raw.isNullOrBlank()) {
+                                        isSearchingDrug = true
+                                        coroutineScope.launch {
+                                            val nombreResuelto = viewModel.procesarCodigoEscaneado(raw)
+                                            isSearchingDrug = false
+                                            if (nombreResuelto != null) {
+                                                medicacion = nombreResuelto
+                                            } else {
+                                                pendingBarcode = raw
+                                                manualDrugName = ""
+                                                showManualDrugDialog = true
+                                            }
+                                        }
+                                    }
+                                }
+                                .addOnFailureListener {
+                                    Toast.makeText(context, "Error abriendo el escáner", Toast.LENGTH_SHORT).show()
+                                }
+                        }) {
+                            Icon(
+                                imageVector = Icons.Outlined.QrCodeScanner,
+                                contentDescription = "Escanear caja de medicamento",
+                                tint = DetailColors.PrimaryBlue
+                            )
+                        }
+                    }
+                }
+            )
 
             OutlinedTextField(value = dosis, onValueChange = { dosis = it },
                 label = { Text("Dosis") }, placeholder = { Text("Ej: 400mg") },
                 singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
 
             OutlinedTextField(
-                value = intervaloText, // <-- CAMBIADO
+                value = intervaloText,
                 onValueChange = { if (it.all(Char::isDigit) && it.length <= 2) intervaloText = it },
-                label = { Text("Intervalo de tomas (cada X horas)") }, // <-- CAMBIADO
+                label = { Text("Intervalo de tomas (cada X horas)") },
                 singleLine = true,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
@@ -592,23 +667,23 @@ private fun NuevaPautaPacienteBottomSheet(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            val intervalo    = intervaloText.toIntOrNull() ?: 0 // <-- CAMBIADO
+            val intervalo    = intervaloText.toIntOrNull() ?: 0
             val duracionDias = duracionDiasText.toIntOrNull() ?: 0
             val formValid    = medicacion.isNotBlank()
-                    && dosis.isNotBlank() && intervalo > 0 && duracionDias > 0 // <-- CAMBIADO
+                    && dosis.isNotBlank() && intervalo > 0 && duracionDias > 0
 
             Button(
                 onClick = {
                     if (formValid) {
                         val fechaInicio = System.currentTimeMillis()
                         val fechaFin    = fechaInicio + (duracionDias * 86_400_000L)
-                        onConfirm(medicacion, dosis, intervalo, fechaInicio, fechaFin) // <-- CAMBIADO
+                        onConfirm(medicacion, dosis, intervalo, fechaInicio, fechaFin)
                         Toast.makeText(context, "Pauta creada correctamente", Toast.LENGTH_SHORT).show()
                     } else {
                         Toast.makeText(context, "Falta rellenar algún campo obligatorio", Toast.LENGTH_SHORT).show()
                     }
                 },
-                enabled  = true,
+                enabled  = !isSearchingDrug,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape    = RoundedCornerShape(16.dp),
                 colors   = ButtonDefaults.buttonColors(containerColor = DetailColors.PrimaryBlue)
@@ -618,6 +693,54 @@ private fun NuevaPautaPacienteBottomSheet(
                 Text("Crear Pauta", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
         }
+    }
+
+    // ── DIÁLOGO FALLBACK (MANUAL) ──
+    if (showManualDrugDialog) {
+        AlertDialog(
+            onDismissRequest = { showManualDrugDialog = false },
+            title = {
+                Text("Medicamento no identificado", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Código detectado: $pendingBarcode\nIntroduce el nombre comercial para asociarlo a este código en tu base de datos local:",
+                        fontSize = 13.sp, color = DetailColors.TextSecondary
+                    )
+                    OutlinedTextField(
+                        value = manualDrugName,
+                        onValueChange = { manualDrugName = it },
+                        label = { Text("Nombre del medicamento") },
+                        placeholder = { Text("Ej: Paracetamol 1g") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (manualDrugName.isNotBlank()) {
+                            viewModel.guardarFarmacoManual(pendingBarcode, manualDrugName.trim())
+                            medicacion = manualDrugName.trim()
+                            showManualDrugDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = DetailColors.PrimaryBlue)
+                ) {
+                    Text("Asociar y usar", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showManualDrugDialog = false }) {
+                    Text("Cancelar", color = DetailColors.TextSecondary)
+                }
+            },
+            shape = RoundedCornerShape(20.dp),
+            containerColor = DetailColors.CardWhite
+        )
     }
 }
 

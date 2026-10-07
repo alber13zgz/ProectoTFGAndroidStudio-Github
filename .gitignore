@@ -15,5 +15,5 @@
 local.properties
 
 # Relay: identidad privada y dependencias (no subir)
-relay/peer-key.json
+relay/relay-identity.json
 relay/node_modules/

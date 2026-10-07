@@ -160,7 +160,7 @@ class P2PMessagingService(
     companion object {
         const val PROTOCOL_ID = "/medp2p/registro/1.0.0"
         private const val RELAY_ADDRESS =
-            "/ip4/13.48.59.216/tcp/4001/p2p/12D3KooWP71KTgsJ2AvWcrB8KmxreDUeohcUFYLE3ynY4cABhYFx"
+            "/ip4/13.48.59.216/tcp/4001/p2p/12D3KooWGYM8gTNoodKe3YqBAoxanGLJS44YsA118iD2juHtuXhV"
         private const val CONNECT_TIMEOUT_SECONDS = 15L
         private const val MAX_FRAME_LENGTH = 65536
         private const val TAG = "P2P_MSG_SERVICE"

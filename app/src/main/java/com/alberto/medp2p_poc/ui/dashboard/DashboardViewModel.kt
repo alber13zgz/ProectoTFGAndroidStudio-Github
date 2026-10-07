@@ -104,7 +104,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     companion object {
         private const val TAG = "P2P_NETWORK"
         private const val RELAY_BASE =
-            "/ip4/13.48.59.216/tcp/4001/p2p/12D3KooWEBiChhAXXnZRPoM37aoawZbYQKp7WxqtC7LrfZFab4TV"
+            "/ip4/13.48.59.216/tcp/4001/p2p/12D3KooWGYM8gTNoodKe3YqBAoxanGLJS44YsA118iD2juHtuXhV"
     }
     private fun loadPautasPacienteActivas() {
         viewModelScope.launch(Dispatchers.IO) {

@@ -43,7 +43,7 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 
 private const val RELAY_BASE_ADDR =
-    "/ip4/13.48.59.216/tcp/4001/p2p/12D3KooWEBiChhAXXnZRPoM37aoawZbYQKp7WxqtC7LrfZFab4TV"
+    "/ip4/13.48.59.216/tcp/4001/p2p/12D3KooWGYM8gTNoodKe3YqBAoxanGLJS44YsA118iD2juHtuXhV"
 
 private object DetailColors {
     val PrimaryBlue      = Color(0xFF005FB8)

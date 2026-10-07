@@ -64,6 +64,14 @@ fun ClinicalAppNavigation(
 ) {
     val navController = rememberNavController()
 
+    // Resultado de la vinculación (éxito o motivo del rechazo) visible en cualquier pantalla
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(Unit) {
+        dashboardViewModel.linkEvents.collect { result ->
+            android.widget.Toast.makeText(context, result.message, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
     val dashboardData by dashboardViewModel.dashboard.collectAsStateWithLifecycle()
     val currentName   = dashboardData.displayName.ifBlank { userName }
 
@@ -158,10 +166,23 @@ fun ClinicalAppNavigation(
                 LaunchedEffect(Unit) {
                     patientsViewModel.init(dashboardViewModel.currentOwnerPeerId)
                 }
+                // La vinculación termina de forma asíncrona (espera el ACK del
+                // paciente): al confirmarse, se recarga la lista
+                LaunchedEffect(Unit) {
+                    dashboardViewModel.linkEvents.collect { if (it.ok) patientsViewModel.loadPatients() }
+                }
                 PantallaPacientes(
                     viewModel              = patientsViewModel,
                     onPacienteSeleccionado = { peerId ->
                         navController.navigate("patient_detail/$peerId")
+                    },
+                    onLinkPatient = { name, code, allergies ->
+                        dashboardViewModel.linkPatient(name, code, allergies)
+                    },
+                    onUnlinkPatient = { patientId, patientPeerId ->
+                        dashboardViewModel.desvincularPaciente(patientId, patientPeerId) {
+                            patientsViewModel.loadPatients()
+                        }
                     },
                     onBack = { navController.popBackStack() }
                 )

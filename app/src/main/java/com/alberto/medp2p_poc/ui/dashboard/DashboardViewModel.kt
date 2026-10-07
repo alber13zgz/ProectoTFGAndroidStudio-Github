@@ -11,11 +11,13 @@ import com.alberto.medp2p_poc.data.model.Patient
 import com.alberto.medp2p_poc.data.model.UserRole
 import com.alberto.medp2p_poc.data.model.UserSession
 import com.alberto.medp2p_poc.data.p2p.P2PMessagingService
+import com.alberto.medp2p_poc.data.p2p.PairingCode
 import io.libp2p.core.Host
 import io.libp2p.core.crypto.KeyType
 import io.libp2p.core.crypto.PrivKey
 import io.libp2p.core.crypto.generateKeyPair
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +34,9 @@ sealed class ConnectionStatus {
     object Connected    : ConnectionStatus()
     data class Error(val hint: String) : ConnectionStatus()
 }
+
+/** Resultado de un intento de vinculación, para mostrarlo en la UI. */
+data class LinkResult(val ok: Boolean, val message: String)
 
 data class DashboardData(
     val connectionStatus: ConnectionStatus = ConnectionStatus.Disconnected,
@@ -93,6 +98,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     val currentOwnerPeerId: String get() = _dashboard.value.ownerPeerId
 
+    private val _linkEvents = MutableSharedFlow<LinkResult>(extraBufferCapacity = 4)
+    val linkEvents: SharedFlow<LinkResult> = _linkEvents
+
     companion object {
         private const val TAG = "P2P_NETWORK"
         private const val RELAY_BASE =
@@ -132,6 +140,22 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
 
+        // Reconexión automática: el servicio reintenta el relay en segundo plano
+        // (p. ej. al quitar el modo avión) y aquí se refleja en la interfaz
+        viewModelScope.launch {
+            messagingService.relayConectado.collect { conectado ->
+                val actual = _dashboard.value.connectionStatus
+                if (conectado) {
+                    activeHost = messagingService.currentHost
+                    if (actual !is ConnectionStatus.Connected)
+                        _dashboard.value = _dashboard.value.copy(connectionStatus = ConnectionStatus.Connected)
+                } else if (actual is ConnectionStatus.Connected) {
+                    _dashboard.value = _dashboard.value.copy(connectionStatus = ConnectionStatus.Error(
+                        "Sin conexión. Los cambios se guardan y se enviarán al recuperarla."))
+                }
+            }
+        }
+
         loadDashboardCounters()
         loadMedicosVinculados()
         loadAlertasPendientes()
@@ -149,7 +173,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch(Dispatchers.IO) {
             _dashboard.value = _dashboard.value.copy(connectionStatus = ConnectionStatus.Connecting)
             try {
-                val privKey: PrivKey = privateKey ?: generateKeyPair(KeyType.ED25519).first
+                // Sin la identidad real no se puede firmar: una clave aleatoria haría
+                // que todos los pares rechazaran los mensajes, así que se falla claramente
+                val privKey: PrivKey = checkNotNull(privateKey) { "Identidad criptográfica no disponible" }
                 val node = messagingService.start(privKey, _dashboard.value.ownerPeerId)
                 activeHost = node
                 Log.i(TAG, "✅ Nodo P2P activo. PeerId=${node.peerId}")
@@ -173,7 +199,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch(Dispatchers.IO) {
             _dashboard.value = _dashboard.value.copy(connectionStatus = ConnectionStatus.Connecting)
             try {
-                val privKey = storedPrivateKey ?: generateKeyPair(KeyType.ED25519).first
+                val privKey = checkNotNull(storedPrivateKey) { "Identidad criptográfica no disponible" }
                 activeHost?.stop()
                 activeHost = null
                 val node = messagingService.start(privKey, _dashboard.value.ownerPeerId)
@@ -192,12 +218,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    suspend fun sendRecord(destinationCircuitAddr: String, record: MedicalRecord) {
-        val node = activeHost ?: run {
-            Log.e(TAG, "[SEND] Sin nodo activo.")
-            return
-        }
-        messagingService.sendMedicalRecord(node, destinationCircuitAddr, record)
+    suspend fun sendRecord(destinationCircuitAddr: String, record: MedicalRecord) = withContext(Dispatchers.IO) {
+        messagingService.enviarRegistroMedico(destinationCircuitAddr.substringAfterLast("/"), record)
     }
 
     private fun loadDashboardCounters() {
@@ -214,35 +236,111 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun refreshCounters() { loadDashboardCounters() }
 
-    fun linkPatient(fullName: String, peerId: String, allergies: String = "") {
+    /**
+     * CUIDADOR: desvincula a un paciente. Primero avisa al paciente (UNLINK_DOCTOR)
+     * para que revoque la autorización y la clave de este cuidador; después lo
+     * borra localmente junto con su clave de cifrado. Si el paciente no está
+     * conectado, el borrado local se hace igualmente (decisión del cuidador).
+     */
+    fun desvincularPaciente(patientId: String, patientPeerId: String, onDone: () -> Unit = {}) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val node = activeHost
+            val avisado = node != null && messagingService.sendUnlinkDoctorMessage(node, patientPeerId)
+            if (!avisado) Log.w(TAG, "Paciente no notificado de la desvinculación (sin conexión o rechazado)")
+            dbHelper.eliminarPacienteClinico(patientId)
+            loadDashboardCounters()
+            loadPacientesDoctor()
+            loadAlertasPendientes()
+            withContext(Dispatchers.Main) { onDone() }
+        }
+    }
+
+    /**
+     * Renueva ahora la clave de cifrado del dispositivo y la distribuye a los
+     * pares conectados; los demás la recibirán cuando vuelvan a conectarse.
+     */
+    fun rotarClaveCifrado(onResult: (String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val node = activeHost
+            val mensaje = if (node == null) {
+                "Sin conexión: la clave solo se puede renovar con conexión."
+            } else {
+                val pendientes = messagingService.rotarClaveCifrado(node)
+                val epoch = messagingService.claveCifradoActual().epoch
+                if (pendientes == 0) "Clave renovada (época $epoch) y confirmada por todos tus vínculos."
+                else "Clave renovada (época $epoch). $pendientes vínculo(s) la recibirán al conectarse."
+            }
+            withContext(Dispatchers.Main) { onResult(mensaje) }
+        }
+    }
+
+    /**
+     * PACIENTE: genera un código de vinculación de un solo uso (válido 15 min)
+     * para mostrarlo en el QR. Cada apertura del diálogo crea uno nuevo.
+     */
+    suspend fun generarCodigoVinculacion(): String = withContext(Dispatchers.IO) {
+        val owner = _dashboard.value.ownerPeerId
+        val token = PairingCode.generarToken()
+        val clave = messagingService.claveCifradoActual()
+        dbHelper.guardarCodigoVinculacion(owner, token, System.currentTimeMillis() + PairingCode.VALIDEZ_MS)
+        PairingCode.codificar(owner, token, clave.epoch, clave.publicKey)
+    }
+
+    /**
+     * CUIDADOR: vincula un paciente a partir del código leído de su QR.
+     * El paciente solo se guarda localmente si devuelve un ACK firmado, es decir,
+     * si aceptó el código; así ambos directorios quedan siempre coherentes.
+     */
+    fun linkPatient(fullName: String, pairingCode: String, allergies: String = "") {
         viewModelScope.launch(Dispatchers.IO) {
             val owner  = _dashboard.value.ownerPeerId
             val myName = _dashboard.value.displayName
+
+            val code = PairingCode.parse(pairingCode)
+            if (code == null) {
+                _linkEvents.emit(LinkResult(false,
+                    "Código no válido. Escanea el QR del paciente o copia su código completo."))
+                return@launch
+            }
+            val node = activeHost
+            if (node == null) {
+                _linkEvents.emit(LinkResult(false, "Sin conexión: la vinculación necesita red."))
+                return@launch
+            }
+
+            val patient = Patient(
+                fullName         = fullName.trim(),
+                peerId           = code.peerId,
+                allergies        = allergies.trim(),
+                avatarColorIndex = (fullName.hashCode() and 0x7FFFFFFF) % 8,
+                lastSyncAt       = System.currentTimeMillis()
+            )
             try {
-                val colorIndex = (fullName.hashCode() and 0x7FFFFFFF) % 8
-                val patient = Patient(
-                    fullName         = fullName.trim(),
-                    peerId           = peerId.trim(),
-                    allergies        = allergies.trim(),
-                    avatarColorIndex = colorIndex,
-                    lastSyncAt       = System.currentTimeMillis()
-                )
+                // Se guarda ANTES de enviar: al aceptar, el paciente envía enseguida
+                // su historial firmado y este dispositivo debe reconocerlo ya como paciente
                 dbHelper.insertarPacienteClinico(patient, owner)
+                val aceptado = messagingService.sendLinkDoctorMessage(
+                    host            = node,
+                    patientPeerId   = code.peerId,
+                    doctorName      = myName,
+                    pairingToken    = code.token,
+                    patientKeyEpoch = code.keyEpoch,
+                    patientKeyPub   = code.keyPub
+                )
+                if (!aceptado) {
+                    dbHelper.eliminarPacienteClinico(patient.id)
+                    _linkEvents.emit(LinkResult(false,
+                        "El paciente no aceptó la vinculación: debe estar conectado y el código no puede estar caducado ni usado."))
+                    return@launch
+                }
                 Log.d(TAG, "✅ Paciente vinculado: ${patient.fullName}")
                 loadDashboardCounters()
                 loadPacientesDoctor() // Recargar lista para el Dropdown
-
-                val node = activeHost ?: return@launch
-                val destAddr = "$RELAY_BASE/p2p-circuit/p2p/${peerId.trim()}"
-                messagingService.sendLinkDoctorMessage(
-                    host                   = node,
-                    destinationCircuitAddr = destAddr,
-                    doctorPeerId           = owner,
-                    doctorName             = myName,
-                    doctorPhotoUri         = _dashboard.value.photoUri
-                )
+                _linkEvents.emit(LinkResult(true, "Paciente ${patient.fullName} vinculado."))
             } catch (e: Exception) {
                 Log.e(TAG, "Error vinculando paciente: ${e.message}")
+                runCatching { dbHelper.eliminarPacienteClinico(patient.id) }
+                _linkEvents.emit(LinkResult(false, "Error al vincular el paciente."))
             }
         }
     }
@@ -328,9 +426,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             loadAlertasPendientes()
             Log.d(TAG, "✅ Pauta creada: ${pauta.medicacion}")
 
-            val node = activeHost ?: return@launch
-            val destAddr = "$RELAY_BASE/p2p-circuit/p2p/$patientPeerId"
-            messagingService.sendPautaMessage(node, destAddr, pauta)
+            // Offline-First: se encola aunque no haya conexión y se envía al recuperarla
+            messagingService.enviarPauta(pauta)
         }
     }
 
@@ -355,9 +452,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             loadAlertasPendientes()
             Log.d(TAG, "✅ Suministro registrado: pauta=$pautaId")
 
-            val node = activeHost ?: return@launch
-            val destAddr = "$RELAY_BASE/p2p-circuit/p2p/$patientPeerId"
-            messagingService.sendSuministroMessage(node, destAddr, registro)
+            // Offline-First: se encola aunque no haya conexión; el paciente lo
+            // replicará a sus demás cuidadores
+            messagingService.enviarSuministro(registro, _dashboard.value.displayName)
         }
     }
 

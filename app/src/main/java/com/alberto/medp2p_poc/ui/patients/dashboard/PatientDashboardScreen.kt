@@ -170,17 +170,22 @@ fun PatientDashboardScreen(
     }
 
     if (showQrDialog) {
+        // Cada apertura genera un código nuevo de un solo uso (válido 15 min)
+        val pairingCode by produceState<String?>(initialValue = null) {
+            value = dashboardViewModel.generarCodigoVinculacion()
+        }
         SharePatientQrDialog(
-            peerId    = dashboardViewModel.activeHost?.peerId?.toString() ?: "sin-nodo",
-            onDismiss = { showQrDialog = false }
+            pairingCode = pairingCode,
+            onDismiss   = { showQrDialog = false }
         )
     }
 }
 
 @Composable
-private fun SharePatientQrDialog(peerId: String, onDismiss: () -> Unit) {
+private fun SharePatientQrDialog(pairingCode: String?, onDismiss: () -> Unit) {
     val clipboardManager = LocalClipboardManager.current
-    val qrBitmap = remember(peerId) { generateQrBitmap(peerId, 512) }
+    val peerId = pairingCode ?: "Generando código..."
+    val qrBitmap = remember(pairingCode) { pairingCode?.let { generateQrBitmap(it, 512) } }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -188,7 +193,7 @@ private fun SharePatientQrDialog(peerId: String, onDismiss: () -> Unit) {
             textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
         text = {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Muestra este  QR a tu cuidador para que te vincule",
+                Text("Muestra este QR a tu cuidador para que te vincule. Sirve una sola vez y caduca en 15 minutos.",
                     fontSize = 13.sp, color = PatDashColors.TextSecondary, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(16.dp))
                 if (qrBitmap != null) {
@@ -202,6 +207,7 @@ private fun SharePatientQrDialog(peerId: String, onDismiss: () -> Unit) {
                     textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(12.dp))
                 OutlinedButton(onClick = { clipboardManager.setText(AnnotatedString(peerId)) },
+                    enabled = pairingCode != null,
                     shape = RoundedCornerShape(12.dp)) {
                     Icon(Icons.Outlined.ContentCopy, null, Modifier.size(16.dp))
                     Spacer(Modifier.width(8.dp))

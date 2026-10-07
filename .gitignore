@@ -13,3 +13,7 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Relay: identidad privada y dependencias (no subir)
+relay/peer-key.json
+relay/node_modules/

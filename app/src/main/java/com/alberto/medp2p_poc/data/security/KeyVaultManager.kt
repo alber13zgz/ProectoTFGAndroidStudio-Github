@@ -11,6 +11,10 @@ import io.libp2p.core.crypto.PrivKey
 import io.libp2p.core.crypto.PubKey
 import io.libp2p.core.crypto.generateKeyPair
 import io.libp2p.core.crypto.unmarshalPrivateKey
+import com.alberto.medp2p_poc.data.p2p.CryptoUtils
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.security.SecureRandom
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
@@ -32,6 +36,18 @@ class KeyVaultManager(private val context: Context) {
         private const val KEY_PRIVATE_B64 = "libp2p_private_key_b64"
         private const val KEY_PUBLIC_B64 = "libp2p_public_key_b64"
         private const val KEY_PEER_ID = "libp2p_peer_id"
+
+        // Clave de SQLCipher: aleatoria por instalación, nunca en el código fuente
+        private const val KEY_DB_PASSPHRASE = "sqlcipher_db_passphrase_hex"
+        private const val DB_KEY_LENGTH = 32
+        // Cerrojo compartido: varias instancias (una por ViewModel) podrían
+        // pedir la clave a la vez en el primer arranque y generar dos distintas
+        private val DB_KEY_LOCK = Any()
+
+        // Claves de cifrado X25519 propias (una por época), separadas de la identidad
+        private const val KEY_ENC_KEYS = "x25519_encryption_keys_json"
+        private val ENC_KEY_LOCK = Any()
+        private val json = Json { ignoreUnknownKeys = true }
 
         // PBKDF2 params — OWASP recomendado para moviles
         private const val PBKDF2_ALGORITHM = "PBKDF2WithHmacSHA256"
@@ -121,10 +137,105 @@ class KeyVaultManager(private val context: Context) {
     fun hasStoredIdentity(): Boolean =
         encryptedPrefs.contains(KEY_PRIVATE_B64)
 
-    /** Borra toda la boveda (para debug / reset de la app). */
+    /** Borra la identidad libp2p y sus claves de cifrado (reset de perfil). Conserva la clave de la BD. */
     fun clearVault() {
-        encryptedPrefs.edit().clear().apply()
-        Log.w(TAG, "Boveda de claves borrada.")
+        encryptedPrefs.edit()
+            .remove(KEY_PRIVATE_B64)
+            .remove(KEY_PUBLIC_B64)
+            .remove(KEY_PEER_ID)
+            .remove(KEY_ENC_KEYS)
+            .apply()
+        Log.w(TAG, "Identidad borrada de la boveda (clave de BD conservada).")
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // ══ CLAVES DE CIFRADO X25519 (rotables por época) ═══════════
+    // ══════════════════════════════════════════════════════════════
+
+    @Serializable
+    private data class StoredEncKey(val epoch: Int, val priv: String, val pub: String, val createdAt: Long)
+
+    /** Clave de cifrado pública propia de una época (la privada nunca sale de la bóveda). */
+    data class EncKey(val epoch: Int, val publicKey: String, val createdAt: Long)
+
+    private fun leerClavesCifrado(): List<StoredEncKey> =
+        encryptedPrefs.getString(KEY_ENC_KEYS, null)
+            ?.let { json.decodeFromString<List<StoredEncKey>>(it) } ?: emptyList()
+
+    private fun guardarClavesCifrado(claves: List<StoredEncKey>) {
+        check(encryptedPrefs.edit().putString(KEY_ENC_KEYS, json.encodeToString(claves)).commit()) {
+            "No se pudieron persistir las claves de cifrado"
+        }
+    }
+
+    private fun nuevaClave(epoch: Int): StoredEncKey {
+        val (priv, pub) = CryptoUtils.generarParX25519()
+        val stored = StoredEncKey(epoch, CryptoUtils.toB64Url(priv), CryptoUtils.toB64Url(pub), System.currentTimeMillis())
+        priv.fill(0)
+        return stored
+    }
+
+    private fun StoredEncKey.publica() = EncKey(epoch, pub, createdAt)
+
+    /** Clave de cifrado vigente (la de mayor época); la crea si no existe. DEBE llamarse en Dispatchers.IO. */
+    fun getOrCreateEncryptionKey(): EncKey = synchronized(ENC_KEY_LOCK) {
+        val claves = leerClavesCifrado()
+        claves.maxByOrNull { it.epoch }?.let { return it.publica() }
+        val primera = nuevaClave(epoch = 1)
+        guardarClavesCifrado(listOf(primera))
+        Log.d(TAG, "Clave de cifrado X25519 creada (época 1).")
+        primera.publica()
+    }
+
+    /** Renueva la clave de cifrado: nueva época. Las anteriores se conservan hasta purgarlas. */
+    fun rotateEncryptionKey(): EncKey = synchronized(ENC_KEY_LOCK) {
+        val claves = leerClavesCifrado()
+        val nueva = nuevaClave(epoch = (claves.maxOfOrNull { it.epoch } ?: 0) + 1)
+        guardarClavesCifrado(claves + nueva)
+        Log.i(TAG, "Clave de cifrado renovada → época ${nueva.epoch}.")
+        nueva.publica()
+    }
+
+    /** Clave privada X25519 de una época, o null si no existe o ya se purgó (revocada). */
+    fun getEncryptionPrivateKey(epoch: Int): ByteArray? = synchronized(ENC_KEY_LOCK) {
+        leerClavesCifrado().firstOrNull { it.epoch == epoch }?.let { CryptoUtils.fromB64Url(it.priv) }
+    }
+
+    /** Borra las claves privadas de épocas anteriores a [epoch]. La vigente nunca se borra. */
+    fun purgeEncryptionKeysBefore(epoch: Int) = synchronized(ENC_KEY_LOCK) {
+        val claves = leerClavesCifrado()
+        val vigente = claves.maxOfOrNull { it.epoch } ?: return@synchronized
+        val conservar = claves.filter { it.epoch >= minOf(epoch, vigente) }
+        if (conservar.size != claves.size) {
+            guardarClavesCifrado(conservar)
+            Log.i(TAG, "Claves de cifrado anteriores a la época $epoch eliminadas (${claves.size - conservar.size}).")
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // ══ CLAVE DE LA BASE DE DATOS (SQLCipher) ═══════════════════
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Devuelve la passphrase de SQLCipher. Si no existe, genera 32 bytes con
+     * SecureRandom y los guarda en la boveda cifrada (MasterKey del Keystore).
+     *
+     * DEBE llamarse en Dispatchers.IO.
+     */
+    fun getOrCreateDatabasePassphrase(): String = synchronized(DB_KEY_LOCK) {
+        encryptedPrefs.getString(KEY_DB_PASSPHRASE, null)?.let { return it }
+
+        val raw = ByteArray(DB_KEY_LENGTH).also { SecureRandom().nextBytes(it) }
+        val hex = raw.joinToString("") { "%02x".format(it) }
+        raw.fill(0)
+
+        // commit() sincrono: la clave tiene que estar persistida ANTES de
+        // cifrar la BD con ella; si se perdiera, la BD quedaria ilegible
+        check(encryptedPrefs.edit().putString(KEY_DB_PASSPHRASE, hex).commit()) {
+            "No se pudo persistir la clave de la base de datos"
+        }
+        Log.d(TAG, "Clave de SQLCipher generada y almacenada en boveda.")
+        hex
     }
 
     // ══════════════════════════════════════════════════════════════

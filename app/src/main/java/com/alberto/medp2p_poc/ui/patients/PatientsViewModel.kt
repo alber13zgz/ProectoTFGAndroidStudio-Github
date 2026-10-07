@@ -106,26 +106,6 @@ class PatientsViewModel(application: Application) : AndroidViewModel(application
         )
     }
 
-    fun linkPatient(fullName: String, peerId: String, allergies: String = "") {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val colorIndex = (fullName.hashCode() and 0x7FFFFFFF) % 8
-                val patient = Patient(
-                    fullName         = fullName.trim(),
-                    peerId           = peerId.trim(),
-                    allergies        = allergies.trim(),
-                    avatarColorIndex = colorIndex,
-                    lastSyncAt       = System.currentTimeMillis()
-                )
-                dbHelper.insertarPacienteClinico(patient, ownerPeerId)
-                Log.d(TAG, "✅ Paciente vinculado: ${patient.fullName} (owner=$ownerPeerId)")
-                loadPatients()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error vinculando paciente: ${e.message}")
-            }
-        }
-    }
-
     fun toggleFavorite(patientId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -137,15 +117,6 @@ class PatientsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun removePatient(patientId: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                dbHelper.eliminarPacienteClinico(patientId)
-                Log.d(TAG, "Paciente eliminado: $patientId")
-                loadPatients()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error eliminando paciente: ${e.message}")
-            }
-        }
-    }
+    // Vincular y desvincular necesitan red (código QR, ACK firmado, revocación
+    // en el paciente): los ejecuta DashboardViewModel, que tiene el nodo P2P.
 }

@@ -86,4 +86,6 @@ dependencies {
     implementation ("net.zetetic:android-database-sqlcipher:4.5.4")
     implementation("net.zetetic:android-database-sqlcipher:4.5.4")
     implementation("androidx.sqlite:sqlite:2.3.1")
+    // X25519 + HKDF para el E2EE de CryptoUtils (jvm-libp2p solo lo trae en runtime)
+    implementation("org.bouncycastle:bcprov-jdk18on:1.79")
 }

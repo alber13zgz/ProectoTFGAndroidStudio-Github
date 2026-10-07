@@ -442,7 +442,7 @@ private fun ManualLinkDialog(
                     label = { Text("Nombre del paciente") }, singleLine = true,
                     shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = peerId, onValueChange = { peerId = it },
-                    label = { Text("PeerId del paciente") }, placeholder = { Text("Pegar aqui el codigo") },
+                    label = { Text("Codigo de vinculacion del paciente") }, placeholder = { Text("Pegar aqui el codigo") },
                     singleLine = true, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = allergies, onValueChange = { allergies = it },
                     label = { Text("Alergias (opcional)") }, singleLine = true,

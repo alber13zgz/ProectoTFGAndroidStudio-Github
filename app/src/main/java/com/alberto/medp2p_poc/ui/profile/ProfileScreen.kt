@@ -213,6 +213,29 @@ fun ProfileScreen(
                     color = ProfileColors.AccentMint, fontWeight = FontWeight.Medium)
             }
 
+            // ══ SEGURIDAD: renovación manual de la clave de cifrado ══
+            // (además de la renovación automática cada 30 días)
+            Spacer(Modifier.height(24.dp))
+            HorizontalDivider(color = ProfileColors.DividerLight)
+            Spacer(Modifier.height(16.dp))
+            var resultadoClave by remember { mutableStateOf<String?>(null) }
+            OutlinedButton(
+                onClick  = {
+                    resultadoClave = "Renovando clave..."
+                    dashboardViewModel.rotarClaveCifrado { resultadoClave = it }
+                },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape    = RoundedCornerShape(16.dp)
+            ) {
+                Icon(Icons.Outlined.VpnKey, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Renovar clave de cifrado", fontWeight = FontWeight.Bold)
+            }
+            resultadoClave?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, fontSize = 13.sp, color = ProfileColors.PrimaryBlue)
+            }
+
             // ══ ELIMINAR CUENTA (solo pacientes) ══
             if (data.role == UserRole.PATIENT) {
                 Spacer(Modifier.height(24.dp))

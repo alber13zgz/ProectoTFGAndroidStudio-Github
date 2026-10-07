@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alberto.medp2p_poc.data.model.MedicalRecord
 import com.alberto.medp2p_poc.data.model.Patient
+import com.alberto.medp2p_poc.data.model.TomaHistorial
 import com.alberto.medp2p_poc.ui.dashboard.DashboardViewModel
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -79,6 +80,9 @@ fun PantallaDetallePaciente(
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(peerId) { viewModel.loadPatientDetail(peerId, dashboardViewModel.currentOwnerPeerId) }
+    // Cada sincronización P2P (p. ej. un suministro de otro cuidador) refresca las tomas
+    val ultimaSync = dashboardViewModel.dashboard.collectAsStateWithLifecycle().value.lastSyncTimestamp
+    LaunchedEffect(ultimaSync) { viewModel.recargarTomas(peerId) }
     when {
         state.isLoading -> {
             Box(modifier = Modifier.fillMaxSize().background(DetailColors.SurfaceWhite),
@@ -96,6 +100,7 @@ fun PantallaDetallePaciente(
                 medications   = state.activeMedications,
                 pautasActivas = state.pautasActivas,
                 history       = state.medicalHistory,
+                tomas         = state.tomas,
                 onBack        = onBack,
                 onAddNote = { nota ->
                     val destinationAddr = "$RELAY_BASE_ADDR/p2p-circuit/p2p/$peerId"
@@ -133,15 +138,18 @@ private fun PatientDetailContent(
     medications: List<ActiveMedication>,
     pautasActivas: List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>,
     history: List<MedicalRecord>,
+    tomas: List<TomaHistorial>,
     onBack: () -> Unit,
     onAddNote: (String) -> Unit,
     onAddPrescription: (medicamentoId: String, intervaloHoras: Int) -> Unit,
     onAddPauta: (medicacion: String, dosis: String, intervalo: Int, fechaInicio: Long, fechaFin: Long) -> Unit
 ) {
+    val hayDuplicados = tomas.any { it.posibleDuplicado }
     val tabs = listOf(
         TabInfo("Datos",      Icons.Outlined.Person),
         TabInfo("Medicacion", Icons.Outlined.MedicalServices),
-        TabInfo("Historial",  Icons.Outlined.Description)
+        TabInfo(if (hayDuplicados) "Tomas ⚠" else "Tomas", Icons.Outlined.History),
+        TabInfo("Notas",      Icons.Outlined.Description)
     )
     val pagerState    = rememberPagerState(pageCount = { tabs.size })
     val coroutineScope = rememberCoroutineScope()
@@ -192,7 +200,8 @@ private fun PatientDetailContent(
                     pautasActivas    = pautasActivas,
                     onOpenNuevaPauta = { showNuevaPautaSheet = true }
                 )
-                2 -> TabHistorial(history = history, onAddNote = onAddNote)
+                2 -> TabTomas(tomas = tomas)
+                3 -> TabHistorial(history = history, onAddNote = onAddNote)
             }
         }
 
@@ -451,6 +460,87 @@ private fun HistoryNoteCard(record: MedicalRecord) {
             }
             Spacer(Modifier.height(8.dp))
             Text(text = record.text, fontSize = 14.sp, color = DetailColors.TextPrimary, lineHeight = 20.sp)
+        }
+    }
+}
+
+// ══ HISTORIAL DE TOMAS (RF-08) ══
+// Todas las dosis registradas por cualquier cuidador, la más reciente arriba.
+// Si dos cuidadores registraron la misma dosis sin conexión, al sincronizar se
+// conservan ambos registros (append-only) y aquí se avisa de la posible duplicidad.
+@Composable
+private fun TabTomas(tomas: List<TomaHistorial>) {
+    val duplicadas = tomas.count { it.posibleDuplicado }
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Text(text = "Historial de tomas", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DetailColors.TextPrimary)
+        }
+        if (duplicadas > 0) {
+            item {
+                Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = DetailColors.WarningAmberBg)) {
+                    Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.WarningAmber, null, Modifier.size(24.dp), tint = DetailColors.WarningAmber)
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            "$duplicadas tomas marcadas como posible dosis duplicada: se registraron demasiado " +
+                                "seguidas para su pauta. Comprueba con los demás cuidadores qué se administró.",
+                            fontSize = 13.sp, color = DetailColors.TextPrimary, lineHeight = 18.sp
+                        )
+                    }
+                }
+            }
+        }
+        if (tomas.isEmpty()) {
+            item { EmptyTabState(icon = Icons.Outlined.History, message = "Sin tomas registradas", hint = "Las dosis suministradas por cualquier cuidador apareceran aqui") }
+        } else {
+            items(tomas, key = { it.id }) { toma -> TomaCard(toma = toma) }
+        }
+    }
+}
+
+@Composable
+private fun TomaCard(toma: TomaHistorial) {
+    val accent = if (toma.posibleDuplicado) DetailColors.WarningAmber else DetailColors.AccentMint
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (toma.posibleDuplicado) DetailColors.WarningAmberBg else DetailColors.CardWhite)) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
+                Text("${toma.medicacion}  ·  ${toma.dosis}", fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                    color = DetailColors.TextPrimary, modifier = Modifier.weight(1f),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(formatDateTime(toma.timestamp), fontSize = 11.sp, color = DetailColors.TextSecondary)
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(accent))
+                Spacer(Modifier.width(8.dp))
+                Text("Administrada por ${toma.administradoPorNombre}", fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium, color = DetailColors.TextSecondary)
+                if (toma.firmada) {
+                    Spacer(Modifier.width(6.dp))
+                    Icon(Icons.Outlined.VerifiedUser, contentDescription = "Firmada por su autor",
+                        modifier = Modifier.size(14.dp), tint = DetailColors.AccentMint)
+                }
+            }
+            val detalles = listOfNotNull(
+                toma.temperatura?.let { "Temperatura: $it ºC" },
+                toma.sintomas?.takeIf { it.isNotBlank() }?.let { "Síntomas: $it" },
+                toma.notas?.takeIf { it.isNotBlank() }?.let { "Notas: $it" }
+            )
+            if (detalles.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                detalles.forEach { Text(it, fontSize = 12.sp, color = DetailColors.TextPrimary) }
+            }
+            if (toma.posibleDuplicado) {
+                Spacer(Modifier.height(6.dp))
+                Text("⚠ Posible dosis duplicada", fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                    color = DetailColors.WarningAmber)
+            }
         }
     }
 }

@@ -66,6 +66,11 @@ private object PatColors {
 fun PantallaPacientes(
     viewModel: PatientsViewModel,
     onPacienteSeleccionado: (peerId: String) -> Unit,
+    // La vinculación necesita red (código de un solo uso + ACK firmado del
+    // paciente), así que la ejecuta DashboardViewModel, que tiene el nodo P2P
+    onLinkPatient: (name: String, pairingCode: String, allergies: String) -> Unit,
+    // Desvincular también necesita red: avisa al paciente para que revoque al cuidador
+    onUnlinkPatient: (patientId: String, patientPeerId: String) -> Unit,
     onBack: () -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -203,7 +208,7 @@ fun PantallaPacientes(
                         patients         = state.patients,
                         onSelect         = { onPacienteSeleccionado(it.peerId) },
                         onToggleFavorite = { viewModel.toggleFavorite(it.id) },
-                        onDelete         = { viewModel.removePatient(it.id) }
+                        onDelete         = { onUnlinkPatient(it.id, it.peerId) }
                     )
                 }
             }
@@ -218,7 +223,7 @@ fun PantallaPacientes(
                 scannedPeerId  = ""
             },
             onConfirm = { name, peerId, allergies ->
-                viewModel.linkPatient(name, peerId, allergies)
+                onLinkPatient(name, peerId, allergies)
                 showLinkDialog = false
                 scannedPeerId  = ""
             }

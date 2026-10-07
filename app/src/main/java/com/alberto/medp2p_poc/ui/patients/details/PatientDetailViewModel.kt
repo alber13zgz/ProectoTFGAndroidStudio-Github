@@ -9,7 +9,11 @@ import com.alberto.medp2p_poc.data.model.MedicalRecord
 import com.alberto.medp2p_poc.data.model.Medicamento
 import com.alberto.medp2p_poc.data.model.Patient
 import com.alberto.medp2p_poc.data.model.PautaMedica
+import com.alberto.medp2p_poc.data.model.DetectorDuplicados
+import com.alberto.medp2p_poc.data.model.TomaHistorial
+import com.alberto.medp2p_poc.data.p2p.SuministroPayload
 import com.alberto.medp2p_poc.ui.dashboard.DashboardViewModel
+import kotlinx.serialization.json.Json
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,6 +38,7 @@ data class PatientDetailState(
     val activeMedications: List<ActiveMedication> = emptyList(),
     val medicalHistory: List<MedicalRecord> = emptyList(),
     val pautasActivas: List<com.alberto.medp2p_poc.data.model.PautaMedicaV2> = emptyList(),
+    val tomas: List<TomaHistorial> = emptyList(),
     val isLoading: Boolean = true,
     val errorMessage: String? = null,
     val lastSendResult: SendResult = SendResult.Idle
@@ -76,6 +81,7 @@ class PatientDetailViewModel(application: Application) : AndroidViewModel(applic
                     activeMedications = medications,
                     medicalHistory    = history,
                     pautasActivas     = pautasActivas,
+                    tomas             = cargarTomas(peerId),
                     isLoading         = false
                 )
                 Log.d(TAG, "Detalle cargado: ${patient.fullName} | " +
@@ -88,6 +94,41 @@ class PatientDetailViewModel(application: Application) : AndroidViewModel(applic
                     errorMessage = "Error al cargar los datos clinicos."
                 )
             }
+        }
+    }
+
+    private val json = Json { ignoreUnknownKeys = true }
+
+    /**
+     * Historial de tomas del paciente con el autor de cada una y las posibles
+     * dosis duplicadas señaladas (p. ej. dos cuidadores sin conexión a la vez).
+     */
+    private fun cargarTomas(patientPeerId: String): List<TomaHistorial> {
+        val tomas = dbHelper.obtenerHistorialTomas(patientPeerId).map { fila ->
+            val nombreDeclarado = runCatching {
+                json.decodeFromString<SuministroPayload>(fila.contenidoFirmado).administradoPorNombre
+            }.getOrDefault("")
+            TomaHistorial(
+                id = fila.id, pautaId = fila.pautaId, medicacion = fila.medicacion, dosis = fila.dosis,
+                intervaloHoras = fila.intervaloHoras, timestamp = fila.timestamp,
+                administradoPorPeerId = fila.administradoPorPeerId,
+                administradoPorNombre = when {
+                    fila.administradoPorPeerId == ownerPeerId -> "Tú"
+                    nombreDeclarado.isNotBlank() -> nombreDeclarado
+                    else -> "Cuidador …${fila.administradoPorPeerId.takeLast(6)}"
+                },
+                temperatura = fila.temperatura, sintomas = fila.sintomas, notas = fila.notas,
+                firmada = fila.firma.isNotEmpty()
+            )
+        }
+        return DetectorDuplicados.marcar(tomas)
+    }
+
+    /** Recarga solo las tomas (al llegar una sincronización con la pantalla abierta). */
+    fun recargarTomas(patientPeerId: String) {
+        if (_state.value.patient == null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _state.value = _state.value.copy(tomas = cargarTomas(patientPeerId))
         }
     }
 

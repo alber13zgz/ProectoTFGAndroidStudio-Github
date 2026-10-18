@@ -484,8 +484,8 @@ private fun TabTomas(tomas: List<TomaHistorial>) {
                         Icon(Icons.Outlined.WarningAmber, null, Modifier.size(24.dp), tint = DetailColors.WarningAmber)
                         Spacer(Modifier.width(12.dp))
                         Text(
-                            "$duplicadas tomas marcadas como posible dosis duplicada: se registraron demasiado " +
-                                "seguidas para su pauta. Comprueba con los demás cuidadores qué se administró.",
+                            "$duplicadas tomas marcadas como posible dosis duplicada: corresponden a la misma " +
+                                "dosis prevista de su pauta. Comprueba con los demás cuidadores qué se administró.",
                             fontSize = 13.sp, color = DetailColors.TextPrimary, lineHeight = 18.sp
                         )
                     }
@@ -514,6 +514,10 @@ private fun TomaCard(toma: TomaHistorial) {
                     color = DetailColors.TextPrimary, modifier = Modifier.weight(1f),
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(formatDateTime(toma.timestamp), fontSize = 11.sp, color = DetailColors.TextSecondary)
+            }
+            if (toma.dosisProgramada > 0) {
+                Text("Dosis prevista: ${formatDateTime(toma.dosisProgramada)}", fontSize = 11.sp,
+                    color = DetailColors.TextSecondary)
             }
             Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {

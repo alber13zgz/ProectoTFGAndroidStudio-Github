@@ -214,7 +214,7 @@ fun ProfileScreen(
             }
 
             // ══ SEGURIDAD: renovación manual de la clave de cifrado ══
-            // (además de la renovación automática cada 30 días)
+            // (no hay renovación automática: se renueva si se sospecha un compromiso)
             Spacer(Modifier.height(24.dp))
             HorizontalDivider(color = ProfileColors.DividerLight)
             Spacer(Modifier.height(16.dp))

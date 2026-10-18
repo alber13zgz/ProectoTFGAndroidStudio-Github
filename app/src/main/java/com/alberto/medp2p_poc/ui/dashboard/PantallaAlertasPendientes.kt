@@ -27,6 +27,7 @@ fun PantallaAlertasPendientes(
     onBack: () -> Unit
 ) {
     val alertas by viewModel.alertasPendientes.collectAsStateWithLifecycle()
+    val data by viewModel.dashboard.collectAsStateWithLifecycle()
     // 1. Recogemos la lista de pacientes para poder buscar sus nombres
     val pacientes by viewModel.pacientesDoctor.collectAsStateWithLifecycle()
 
@@ -77,16 +78,19 @@ fun PantallaAlertasPendientes(
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
                 }
-                items(alertas, key = { it.id }) { pauta ->
+                items(alertas, key = { it.pauta.id + it.dosisProgramada }) { alerta ->
                     // 2. Buscamos el nombre del paciente asociado al peerId de la pauta
-                    val pacienteAsociado = pacientes.find { it.peerId == pauta.patientPeerId }
+                    val pacienteAsociado = pacientes.find { it.peerId == alerta.pauta.patientPeerId }
                     val nombrePaciente = pacienteAsociado?.fullName ?: "Paciente desconocido"
 
                     AlertaMedicacionCard(
-                        pauta          = pauta,
-                        patientName    = nombrePaciente, // <--- 3. Pasamos el nombre requerido
-                        onSuministrada = { temp, sintomas, notas -> // <--- ESTA ES LA ÚNICA LÍNEA CORREGIDA
-                            viewModel.registrarSuministro(pauta.id, pauta.patientPeerId, temp, sintomas, notas)
+                        alerta               = alerta,
+                        patientName          = nombrePaciente,
+                        ultimaSincronizacion = pacienteAsociado?.lastSyncAt,
+                        conectado            = data.connectionStatus is ConnectionStatus.Connected,
+                        onAbrir              = { viewModel.comprobarSincronizacion(alerta.pauta.patientPeerId) },
+                        onSuministrada       = { temp, sintomas, notas ->
+                            viewModel.registrarSuministro(alerta, temp, sintomas, notas)
                         }
                     )
                 }

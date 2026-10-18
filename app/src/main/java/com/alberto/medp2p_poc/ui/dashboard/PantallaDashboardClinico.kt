@@ -142,6 +142,13 @@ fun PantallaDashboardClinico(
 
             Spacer(modifier = Modifier.height(20.dp))
 
+            // Posible sobredosificación: la misma dosis prevista registrada más de una vez
+            val conflictos by viewModel.conflictosDosis.collectAsStateWithLifecycle()
+            if (conflictos.isNotEmpty()) {
+                ConflictosDosisCard(conflictos = conflictos, pacientes = pacientes)
+                Spacer(Modifier.height(16.dp))
+            }
+
             if (alertas.isNotEmpty()) {
                 Text(
                     text = "Alertas de Medicacion (Hoy)",
@@ -150,15 +157,18 @@ fun PantallaDashboardClinico(
                     color = DashColors.TextPrimary,
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
-                alertas.forEach { pauta ->
-                    val pacienteAsociado = pacientes.find { it.peerId == pauta.patientPeerId }
+                alertas.forEach { alerta ->
+                    val pacienteAsociado = pacientes.find { it.peerId == alerta.pauta.patientPeerId }
                     val nombrePaciente = pacienteAsociado?.fullName ?: "Paciente desconocido"
 
                     AlertaMedicacionCard(
-                        pauta          = pauta,
-                        patientName    = nombrePaciente,
-                        onSuministrada = { temp, sintomas, notas -> // <-- AÑADIDO: Recibe los 3 parámetros del formulario
-                            viewModel.registrarSuministro(pauta.id, pauta.patientPeerId, temp, sintomas, notas) // <-- AÑADIDO: Los pasa al ViewModel
+                        alerta               = alerta,
+                        patientName          = nombrePaciente,
+                        ultimaSincronizacion = pacienteAsociado?.lastSyncAt,
+                        conectado            = data.connectionStatus is ConnectionStatus.Connected,
+                        onAbrir              = { viewModel.comprobarSincronizacion(alerta.pauta.patientPeerId) },
+                        onSuministrada       = { temp, sintomas, notas ->
+                            viewModel.registrarSuministro(alerta, temp, sintomas, notas)
                         }
                     )
                     Spacer(Modifier.height(8.dp))
@@ -618,12 +628,54 @@ private fun QuickActionCard(icon: ImageVector, title: String, subtitle: String,
     }
 }
 
+private fun horaMinuto(t: Long): String =
+    java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t))
+
+private fun fechaHora(t: Long): String =
+    java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t))
+
+/** Si no hay contacto reciente con el móvil del paciente, puede faltar alguna toma de otro cuidador. */
+internal const val SINCRONIZACION_RECIENTE_MS = 15L * 60 * 1000
+
+@Composable
+internal fun ConflictosDosisCard(
+    conflictos: List<com.alberto.medp2p_poc.data.model.ConflictoDosis>,
+    pacientes: List<com.alberto.medp2p_poc.data.model.Patient>
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = DashColors.ErrorRedBg)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.WarningAmber, null, Modifier.size(22.dp), tint = DashColors.ErrorRed)
+                Spacer(Modifier.width(8.dp))
+                Text("Posible sobredosificación", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = DashColors.ErrorRed)
+            }
+            Spacer(Modifier.height(6.dp))
+            conflictos.forEach { c ->
+                val paciente = pacientes.find { it.peerId == c.patientPeerId }?.fullName ?: "Paciente"
+                Text("• ${c.medicacion} ($paciente): la dosis de las ${fechaHora(c.dosisProgramada)} " +
+                        "se ha registrado ${c.veces} veces.", fontSize = 13.sp, color = DashColors.TextPrimary)
+            }
+            Spacer(Modifier.height(6.dp))
+            Text("Comprobad entre los cuidadores qué se ha administrado realmente y revisad el historial de tomas del paciente.",
+                fontSize = 12.sp, color = DashColors.TextSecondary)
+        }
+    }
+}
+
 @Composable
 internal fun AlertaMedicacionCard(
-    pauta: com.alberto.medp2p_poc.data.model.PautaMedicaV2,
+    alerta: com.alberto.medp2p_poc.data.model.AlertaDosis,
     patientName: String,
-    onSuministrada: (Float?, String?, String?) -> Unit // <-- CAMBIADO: Acepta los parámetros opcionales
+    ultimaSincronizacion: Long?,
+    conectado: Boolean,
+    onAbrir: () -> Unit,
+    onSuministrada: (Float?, String?, String?) -> Unit
 ) {
+    val pauta = alerta.pauta
     var showConfirmDialog by remember { mutableStateOf(false) }
 
     // <-- NUEVO: Estados para el formulario opcional
@@ -663,16 +715,15 @@ internal fun AlertaMedicacionCard(
                     fontWeight = FontWeight.Medium,
                     color = DashColors.PrimaryBlue
                 )
-                // <-- CAMBIADO: Muestra "Cada X horas"
                 Text(
-                    text = "Dosis: ${pauta.dosis}  ·  Cada ${pauta.intervaloHoras} horas",
+                    text = "Dosis de las ${horaMinuto(alerta.dosisProgramada)}  ·  ${pauta.dosis}  ·  Cada ${pauta.intervaloHoras} h",
                     fontSize = 11.sp,
                     color = DashColors.TextSecondary
                 )
             }
             Spacer(Modifier.width(8.dp))
             Button(
-                onClick = { showConfirmDialog = true },
+                onClick = { onAbrir(); showConfirmDialog = true },
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = DashColors.AccentMint)
@@ -695,7 +746,31 @@ internal fun AlertaMedicacionCard(
                     modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("¿Confirmar que $patientName ha tomado ${pauta.medicacion}?", fontSize = 14.sp)
+                    Text("¿Confirmar que $patientName ha tomado ${pauta.medicacion} (dosis de las " +
+                        "${horaMinuto(alerta.dosisProgramada)})?", fontSize = 14.sp)
+
+                    // Estado de sincronización: sin conexión no se puede saber si otro cuidador ya la ha dado
+                    val ahora = System.currentTimeMillis()
+                    val reciente = conectado && ultimaSincronizacion != null &&
+                        ahora - ultimaSincronizacion < SINCRONIZACION_RECIENTE_MS
+                    Text(
+                        text = "Última sincronización con el móvil de $patientName: " +
+                            (ultimaSincronizacion?.let { fechaHora(it) } ?: "nunca"),
+                        fontSize = 12.sp,
+                        color = if (reciente) DashColors.TextSecondary else DashColors.ErrorRed
+                    )
+                    if (!reciente) {
+                        Card(colors = CardDefaults.cardColors(containerColor = DashColors.ErrorRedBg),
+                            shape = RoundedCornerShape(12.dp)) {
+                            Text(
+                                "La información no está actualizada${if (!conectado) " (no hay conexión)" else ""}. " +
+                                    "Otro cuidador podría haber administrado ya esta dosis. Antes de darla, " +
+                                    "compruébalo con el resto de cuidadores o con el propio paciente.",
+                                fontSize = 12.sp, color = DashColors.ErrorRed,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
                     Divider(color = DashColors.DividerLight, modifier = Modifier.padding(vertical = 8.dp))
                     Text("Registro clinico (Opcional)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
 

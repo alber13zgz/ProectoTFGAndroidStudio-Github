@@ -72,10 +72,14 @@ import java.util.concurrent.TimeUnit
 //     la del paciente llega además por el QR, un canal físico.
 //   - Intercambio: QR (paciente → cuidador) y LINK_DOCTOR (cuidador → paciente).
 //   - Almacenamiento: privadas en KeyVaultManager; públicas de los pares en clave_par.
-//   - Renovación: cada ROTACION_CLAVE_MS se crea una época nueva y se envía
-//     KEY_UPDATE firmado a cada par hasta que lo confirma con ACK firmado.
-//   - Revocación: al desvincular se borra la clave del par; las privadas
-//     propias antiguas se purgan cuando todos los pares conocen la nueva.
+//   - Renovación: manual (p. ej. si se sospecha que el dispositivo está
+//     comprometido): se crea una época nueva y se envía KEY_UPDATE firmado
+//     a cada par hasta que lo confirma con ACK firmado. No hay rotación
+//     automática: rotar por calendario no mejora la seguridad por sí solo.
+//   - Retención: las privadas antiguas se conservan según PoliticaRetencion
+//     (todos confirman + 7 días, máximo 30 días). Un mensaje cifrado con una
+//     clave ya retirada recibe STALE_KEY y el emisor lo reenvía con la nueva.
+//   - Revocación: al desvincular se borra la clave del par.
 //
 // SINCRONIZACIÓN OFFLINE-FIRST:
 //   - Cola de envío (sync_log): todo registro clínico se guarda en local y
@@ -144,7 +148,8 @@ data class SuministroPayload(
     val temperatura: Float? = null, // <-- NUEVO: Pasa por red
     val sintomas: String? = null,   // <-- NUEVO: Pasa por red
     val notas: String? = null,      // <-- NUEVO: Pasa por red
-    val administradoPorNombre: String = ""   // para el historial de los demás cuidadores
+    val administradoPorNombre: String = "",  // para el historial de los demás cuidadores
+    val dosisProgramada: Long = 0L           // hora prevista de la dosis: identificador común de la toma
 )
 
 @Serializable
@@ -171,12 +176,14 @@ class P2PMessagingService(
         const val TYPE_UNLINK_PATIENT   = "UNLINK_PATIENT"   // paciente → cuidador
         const val TYPE_UNLINK_DOCTOR    = "UNLINK_DOCTOR"    // cuidador → paciente
         const val TYPE_KEY_UPDATE       = "KEY_UPDATE"
+        const val TYPE_PING             = "PING"            // comprobación de sincronización
 
         const val ENVELOPE_VERSION = 3
         private const val RESP_ACK          = "ACK"
         private const val RESP_REJECTED     = "REJECTED"
         private const val RESP_PEER_OFFLINE = "PEER_OFFLINE"
         private const val RESP_SIN_CLAVE    = "SIN_CLAVE"   // local: no hay clave del destinatario
+        private const val RESP_STALE_KEY    = "STALE_KEY"   // el receptor ya retiró la clave usada
         // Tolerancia a relojes desincronizados entre móviles
         private const val MAX_CLOCK_SKEW_MS = 5L * 60 * 1000
         // Ventana de validez: amplia porque el modelo es Offline-First y un
@@ -184,10 +191,10 @@ class P2PMessagingService(
         private const val MAX_MESSAGE_AGE_MS = 30L * 24 * 60 * 60 * 1000
         // Los pendientes se dan por caducados un día antes de que el receptor los rechace
         private const val MARGEN_EXPIRACION_MS = 24L * 60 * 60 * 1000
-        // Periodo de renovación de la clave de cifrado del dispositivo
-        private const val ROTACION_CLAVE_MS = 30L * 24 * 60 * 60 * 1000
         // Cada cuánto se comprueba la conexión con el relay y se reintenta la cola
         private const val INTERVALO_MANTENIMIENTO_MS = 30_000L
+        // Si no hay contacto con el móvil de un paciente desde hace este tiempo, se le hace PING
+        private const val PING_PACIENTE_MS = 5L * 60 * 1000
     }
 
     private val _incomingMessages = MutableSharedFlow<MedicalRecord>(
@@ -286,11 +293,11 @@ class P2PMessagingService(
                 Log.i(TAG, "[CLAVES] ${peer.take(12)} confirmó la clave de época ${bundle.epoch}")
             }
         }
-        keyVault.purgeEncryptionKeysBefore(dbHelper.minEpochConfirmado(ownerPeerId) ?: bundle.epoch)
+        keyVault.purgeEncryptionKeys(dbHelper.minEpochConfirmado(ownerPeerId))
     }
 
     /**
-     * Renueva ya la clave de cifrado (además de la renovación periódica automática).
+     * Renueva la clave de cifrado (la renovación es manual, desde el perfil).
      * Devuelve cuántos pares aún no han confirmado la clave nueva.
      */
     suspend fun rotarClaveCifrado(host: Host): Int = withContext(Dispatchers.IO) {
@@ -409,8 +416,22 @@ class P2PMessagingService(
             return
         }
 
-        val aplicado = try {
-            val plain = openEnvelope(env)
+        val plain = try {
+            openEnvelope(env)
+        } catch (e: ClaveNoDisponibleException) {
+            // Cifrado con una clave mía ya retirada: el emisor no conoce aún la nueva.
+            // No se pierde: STALE_KEY hace que lo deje pendiente y se le envía la clave vigente.
+            Log.w(TAG, "[CLAVES] ${env.type} de ${env.senderPeerId.take(12)} cifrado con la época ${e.epoch}, ya retirada")
+            dbHelper.olvidarMensajeRecibido(env.msgId)
+            replyReceipt(ctx, env, RESP_STALE_KEY)
+            host?.let { node -> serviceScope.launch { runCatching { sincronizarClaves(node) } } }
+            return
+        } catch (e: Exception) {
+            Log.e(TAG, "[RECEPTOR] No se pudo descifrar ${env.type}: ${e.message}")
+            null
+        }
+
+        val aplicado = plain != null && try {
             when (env.type) {
                 TYPE_MEDICAL_RECORD   -> handleMedicalRecord(env.senderPeerId, plain)
                 TYPE_LINK_DOCTOR      -> handleLinkDoctor(env.senderPeerId, plain)
@@ -419,6 +440,7 @@ class P2PMessagingService(
                 TYPE_UNLINK_PATIENT   -> handleUnlinkPatient(env.senderPeerId, plain)
                 TYPE_UNLINK_DOCTOR    -> handleUnlinkDoctor(env.senderPeerId, plain)
                 TYPE_KEY_UPDATE       -> handleKeyUpdate(env.senderPeerId, plain)
+                TYPE_PING             -> handlePing(env.senderPeerId)
                 else -> denegar(env.type, env.senderPeerId, "tipo desconocido")
             }
         } catch (e: Exception) {
@@ -427,6 +449,7 @@ class P2PMessagingService(
         }
 
         if (aplicado) {
+            dbHelper.actualizarUltimoContacto(ownerPeerId, env.senderPeerId, System.currentTimeMillis())
             _syncEvents.emit(System.currentTimeMillis())
             replyReceipt(ctx, env, RESP_ACK)
         } else {
@@ -434,6 +457,18 @@ class P2PMessagingService(
             dbHelper.olvidarMensajeRecibido(env.msgId)
             replyReceipt(ctx, env, RESP_REJECTED)
         }
+    }
+
+    /**
+     * Comprobación de sincronización: un dispositivo vinculado pregunta si estoy
+     * conectado. Si soy el paciente, aprovecho para enviarle ya lo que tenga pendiente
+     * (por ejemplo, tomas de otros cuidadores).
+     */
+    private fun handlePing(sender: String): Boolean {
+        if (!dbHelper.esCuidadorVinculado(ownerPeerId, sender) && !dbHelper.esPacienteVinculado(ownerPeerId, sender))
+            return denegar(TYPE_PING, sender, "remitente no vinculado")
+        vaciarColaAhora()
+        return true
     }
 
     private fun denegar(type: String, sender: String, motivo: String): Boolean {
@@ -572,7 +607,8 @@ class P2PMessagingService(
                 patientPeerId = s.patientPeerId,
                 doctorAdministeredPeerId = s.doctorAdministeredPeerId,
                 timestampSuministro = s.timestampSuministro,
-                temperatura = s.temperatura, sintomas = s.sintomas, notas = s.notas
+                temperatura = s.temperatura, sintomas = s.sintomas, notas = s.notas,
+                dosisProgramada = s.dosisProgramada
             ))
             dbHelper.guardarFirmaSuministro(s.id, reg.contenido, reg.firma)
             Log.i(TAG, "[RECEPTOR] Suministro guardado: pauta=${s.pautaId.take(8)} (autor ${reg.autorPeerId.take(12)})")
@@ -702,11 +738,7 @@ class P2PMessagingService(
 
         dbHelper.purgarMensajesRecibidos(System.currentTimeMillis() - MAX_MESSAGE_AGE_MS)
 
-        // Renovación periódica de la clave de cifrado del dispositivo
-        val clave = keyVault.getOrCreateEncryptionKey()
-        if (System.currentTimeMillis() - clave.createdAt > ROTACION_CLAVE_MS) {
-            keyVault.rotateEncryptionKey()
-        }
+        keyVault.getOrCreateEncryptionKey()   // primera clave de cifrado (la renovación es manual)
 
         // Reinicio (botón "reintentar"): parar el nodo y el bucle anteriores
         mantenimientoJob?.cancel()
@@ -748,9 +780,33 @@ class P2PMessagingService(
                 runCatching { sincronizarClaves(node) }
                     .onFailure { Log.e(TAG, "[CLAVES] Error sincronizando: ${it.message}") }
                 vaciarCola(node)
+                comprobarPacientes(node)
             }
             delay(INTERVALO_MANTENIMIENTO_MS)
         }
+    }
+
+    /**
+     * CUIDADOR: mantiene al día la "última sincronización" de cada paciente
+     * haciendo PING a los que llevan más de PING_PACIENTE_MS sin contacto.
+     */
+    private suspend fun comprobarPacientes(node: Host) {
+        val ahora = System.currentTimeMillis()
+        dbHelper.obtenerPacientesClinico(ownerPeerId)
+            .filter { ahora - (it.lastSyncAt ?: 0L) > PING_PACIENTE_MS }
+            .forEach { enviar(node, TYPE_PING, it.peerId, "{}") }
+    }
+
+    /**
+     * Comprueba ahora si el móvil del paciente está accesible (p. ej. al abrir el
+     * diálogo de registrar una toma). Si responde, se actualiza su "última
+     * sincronización" y el paciente envía enseguida lo que tuviera pendiente.
+     */
+    suspend fun comprobarContacto(patientPeerId: String): Boolean = withContext(Dispatchers.IO) {
+        val node = host ?: return@withContext false
+        val ok = enviar(node, TYPE_PING, patientPeerId, "{}")
+        if (ok) _syncEvents.emit(System.currentTimeMillis())
+        ok
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -793,11 +849,21 @@ class P2PMessagingService(
             when (estado) {
                 RESP_ACK -> {
                     dbHelper.actualizarEstadoMensaje(m.msgId, "DELIVERED")
+                    if (m.tipoMensaje == TYPE_UNLINK_DOCTOR) dbHelper.borrarClavePar(ownerPeerId, m.destPeerId)
                     entregados++
                 }
                 RESP_REJECTED, RESP_SIN_CLAVE -> {
                     dbHelper.actualizarEstadoMensaje(m.msgId, "REJECTED")
+                    // Si el paciente ya no me tenía vinculado, la relación también está rota
+                    if (m.tipoMensaje == TYPE_UNLINK_DOCTOR) dbHelper.borrarClavePar(ownerPeerId, m.destPeerId)
                     Log.e(TAG, "[COLA] ❌ ${m.tipoMensaje} a ${m.destPeerId.take(12)} descartado ($estado)")
+                }
+                RESP_STALE_KEY -> {
+                    // El destinatario renovó su clave: queda pendiente y se volverá a
+                    // cifrar con la nueva en cuanto llegue su KEY_UPDATE
+                    dbHelper.actualizarEstadoMensaje(m.msgId, "SEND_PENDING")
+                    noDisponibles += m.destPeerId
+                    Log.w(TAG, "[COLA] ${m.tipoMensaje} a ${m.destPeerId.take(12)} espera la clave nueva del destinatario")
                 }
                 else -> {
                     dbHelper.actualizarEstadoMensaje(m.msgId, "SEND_PENDING")   // cuenta el intento
@@ -847,7 +913,8 @@ class P2PMessagingService(
             doctorAdministeredPeerId = registro.doctorAdministeredPeerId,
             timestampSuministro = registro.timestampSuministro,
             temperatura = registro.temperatura, sintomas = registro.sintomas, notas = registro.notas,
-            administradoPorNombre = nombreAutor
+            administradoPorNombre = nombreAutor,
+            dosisProgramada = registro.dosisProgramada
         ))
         val reg = RegistroFirmado.crear(identity, TYPE_SUMINISTRO_PAUTA, ownerPeerId, contenido)
         dbHelper.guardarFirmaSuministro(registro.id, contenido, reg.firma)
@@ -885,6 +952,8 @@ class P2PMessagingService(
         val aceptado = enviar(host, TYPE_LINK_DOCTOR, patientPeerId, json.encodeToString(payload),
             recipientKey = patientKeyEpoch to patientKeyPub)
         if (aceptado) {
+            // Si había una desvinculación de este paciente aún sin entregar, ya no procede
+            dbHelper.cancelarMensajesPendientes(ownerPeerId, patientPeerId, TYPE_UNLINK_DOCTOR)
             dbHelper.guardarClavePar(ownerPeerId, patientPeerId, patientKeyEpoch, patientKeyPub)
             dbHelper.marcarEpochConfirmado(ownerPeerId, patientPeerId, miClave.epoch)
         }
@@ -902,13 +971,17 @@ class P2PMessagingService(
         enviar(host, TYPE_UNLINK_PATIENT, destPeerId, json.encodeToString(UnlinkPatientPayload(patientPeerId)))
     }
 
-    /** CUIDADOR → PACIENTE: revoca la autorización del cuidador en el dispositivo del paciente. */
-    suspend fun sendUnlinkDoctorMessage(host: Host, patientPeerId: String): Boolean =
-        withContext(Dispatchers.IO) {
-            Log.i(TAG, "[UNLINK_DOCTOR] Revocando vínculo con $patientPeerId")
-            enviar(host, TYPE_UNLINK_DOCTOR, patientPeerId,
-                json.encodeToString(UnlinkDoctorPayload(ownerPeerId)))
-        }
+    /**
+     * CUIDADOR → PACIENTE: revoca la autorización del cuidador en el dispositivo del
+     * paciente. Se encola como el resto de mensajes: si el paciente no está conectado,
+     * le llega al volver. La clave del paciente se conserva hasta entonces (hace falta
+     * para cifrar el aviso) y se borra cuando el paciente lo confirma (vaciarCola).
+     */
+    fun enviarDesvinculacion(patientPeerId: String) {
+        Log.i(TAG, "[UNLINK_DOCTOR] Revocando vínculo con ${patientPeerId.take(12)}")
+        encolar(patientPeerId, TYPE_UNLINK_DOCTOR, json.encodeToString(UnlinkDoctorPayload(ownerPeerId)))
+        vaciarColaAhora()
+    }
 
     /**
      * Envía un sobre por el relay y devuelve el resultado: ACK / REJECTED
@@ -936,7 +1009,12 @@ class P2PMessagingService(
             val raw = ackFuture.get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             val estado = interpretarRespuesta(raw, envelope)
             when (estado) {
-                RESP_ACK          -> Log.i(TAG, "[SEND] ✅ ${envelope.type} entregado (${envelope.msgId.take(8)})")
+                RESP_ACK          -> {
+                    // Acuse firmado del destino: si es un paciente, cuenta como sincronización
+                    dbHelper.actualizarUltimoContacto(ownerPeerId, envelope.destPeerId, System.currentTimeMillis())
+                    Log.i(TAG, "[SEND] ✅ ${envelope.type} entregado (${envelope.msgId.take(8)})")
+                }
+                RESP_STALE_KEY    -> Log.w(TAG, "[SEND] El destino renovó su clave, queda pendiente (${envelope.msgId.take(8)})")
                 RESP_PEER_OFFLINE -> Log.w(TAG, "[SEND] ⚠️ Destino desconectado, queda pendiente (${envelope.msgId.take(8)})")
                 RESP_REJECTED     -> Log.e(TAG, "[SEND] ❌ El receptor rechazó el sobre (${envelope.msgId.take(8)})")
                 else              -> Log.w(TAG, "[SEND] Respuesta no verificable ($estado), queda pendiente")

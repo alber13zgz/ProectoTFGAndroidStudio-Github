@@ -22,7 +22,7 @@ import javax.crypto.spec.SecretKeySpec
 //   - Identidad (Ed25519, = PeerId): solo FIRMA. Nunca cambia.
 //   - Cifrado (X25519, una por dispositivo y "época"): se publica firmada
 //     por la identidad (EncryptionKeyBundle), se intercambia al vincular y
-//     se renueva periódicamente con KEY_UPDATE.
+//     se renueva manualmente con KEY_UPDATE.
 //
 // CIFRADO DE CADA MENSAJE:
 //   1. El emisor genera un par X25519 EFÍMERO y hace ECDH con la clave de
@@ -39,6 +39,10 @@ import javax.crypto.spec.SecretKeySpec
 // emisor, y como el AAD incluye el senderPeerId, re-firmar un sobre ajeno
 // con otra identidad rompe el descifrado.
 // ══════════════════════════════════════════════════════════════════════
+/** El mensaje está cifrado para una época de clave que este dispositivo ya ha borrado. */
+class ClaveNoDisponibleException(val epoch: Int) :
+    IllegalStateException("Clave de cifrado de la época $epoch no disponible")
+
 object CryptoUtils {
 
     private const val ALGORITHM      = "AES/GCM/NoPadding"
@@ -118,8 +122,9 @@ object CryptoUtils {
         val iv     = data.copyOfRange(headerLen, headerLen + IV_LENGTH_BYTE)
         val body   = data.copyOfRange(headerLen + IV_LENGTH_BYTE, data.size)
 
-        // Si la época ya se purgó, la clave está revocada y el mensaje no se puede abrir
-        val ownPriv = checkNotNull(privKeyForEpoch(epoch)) { "Clave de cifrado de la época $epoch no disponible" }
+        // Si la época ya se purgó, el mensaje no se puede abrir: el receptor responde
+        // STALE_KEY y el emisor lo reenvía cifrado con la clave nueva
+        val ownPriv = privKeyForEpoch(epoch) ?: throw ClaveNoDisponibleException(epoch)
         val ownPub  = ByteArray(X25519.POINT_SIZE).also { X25519.generatePublicKey(ownPriv, 0, it, 0) }
         val shared  = ecdh(ownPriv, ephPub)
         val key     = hkdfSha256(shared, salt = ephPub + ownPub)

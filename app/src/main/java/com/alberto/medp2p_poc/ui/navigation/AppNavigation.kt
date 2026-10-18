@@ -72,6 +72,35 @@ fun ClinicalAppNavigation(
         }
     }
 
+    // Política de conflicto: si la dosis prevista ya consta como dada, no se registra
+    // otra toma sin una confirmación explícita (riesgo de sobredosificación)
+    var dosisYaRegistrada by remember { mutableStateOf<com.alberto.medp2p_poc.ui.dashboard.DosisYaRegistrada?>(null) }
+    LaunchedEffect(Unit) {
+        dashboardViewModel.dosisYaRegistrada.collect { dosisYaRegistrada = it }
+    }
+    dosisYaRegistrada?.let { d ->
+        val hora = { t: Long -> java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(t)) }
+        AlertDialog(
+            onDismissRequest = { dosisYaRegistrada = null },
+            title = { Text("Esta dosis ya está registrada", fontWeight = FontWeight.Bold, color = Color(0xFFDC3545)) },
+            text = {
+                Text("La dosis de ${d.alerta.pauta.medicacion} de las ${hora(d.alerta.dosisProgramada)} ya la " +
+                    "registró ${d.quien} el ${hora(d.cuando)}.\n\nVolver a darla puede suponer una sobredosis. " +
+                    "Registra otra toma solo si estás seguro de que el paciente la ha tomado de nuevo; quedará " +
+                    "marcada como dosis duplicada para todos los cuidadores.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    dashboardViewModel.registrarSuministro(d.alerta, d.temperatura, d.sintomas, d.notas, forzar = true)
+                    dosisYaRegistrada = null
+                }) { Text("Registrar igualmente", color = Color(0xFFDC3545)) }
+            },
+            dismissButton = {
+                Button(onClick = { dosisYaRegistrada = null }) { Text("No registrar") }
+            }
+        )
+    }
+
     val dashboardData by dashboardViewModel.dashboard.collectAsStateWithLifecycle()
     val currentName   = dashboardData.displayName.ifBlank { userName }
 

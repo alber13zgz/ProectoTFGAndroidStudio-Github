@@ -25,7 +25,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     companion object {
         const val DATABASE_NAME = "medp2p_offline.db"
-        const val DATABASE_VERSION = 11
+        const val DATABASE_VERSION = 12
     }
 
     // Passphrase aleatoria por instalación, custodiada por KeyVaultManager
@@ -218,6 +218,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 notas TEXT,
                 contenidoFirmado TEXT NOT NULL DEFAULT '',
                 firma TEXT NOT NULL DEFAULT '',
+                dosisProgramada INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(pautaId) REFERENCES pauta_medica_v2(id) ON DELETE CASCADE
             )
         """.trimIndent())
@@ -305,18 +306,22 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         // v7..v10 → v11: tablas de seguridad, cola de envío nueva y columnas de
         // firma del autor. Los datos clínicos se conservan.
-        if (oldVersion in 7..10) {
-            crearTablaMensajesRecibidos(db)
-            crearTablaCodigosVinculacion(db)
-            crearTablaClavesPares(db)
-            // La sync_log antigua solo era un registro sin contenido: no se puede reenviar
-            db.execSQL("DROP TABLE IF EXISTS sync_log")
-            crearTablaSyncLog(db)
-            listOf("pauta_medica_v2", "registro_suministro").forEach { tabla ->
-                db.execSQL("ALTER TABLE $tabla ADD COLUMN contenidoFirmado TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE $tabla ADD COLUMN firma TEXT NOT NULL DEFAULT ''")
+        if (oldVersion in 7..11) {
+            if (oldVersion <= 10) {
+                crearTablaMensajesRecibidos(db)
+                crearTablaCodigosVinculacion(db)
+                crearTablaClavesPares(db)
+                // La sync_log antigua solo era un registro sin contenido: no se puede reenviar
+                db.execSQL("DROP TABLE IF EXISTS sync_log")
+                crearTablaSyncLog(db)
+                listOf("pauta_medica_v2", "registro_suministro").forEach { tabla ->
+                    db.execSQL("ALTER TABLE $tabla ADD COLUMN contenidoFirmado TEXT NOT NULL DEFAULT ''")
+                    db.execSQL("ALTER TABLE $tabla ADD COLUMN firma TEXT NOT NULL DEFAULT ''")
+                }
             }
-            Log.i("P2P_TFG", "[DB] Upgrade $oldVersion -> $newVersion: seguridad y cola de envío.")
+            // v12: identificador común de la toma programada
+            db.execSQL("ALTER TABLE registro_suministro ADD COLUMN dosisProgramada INTEGER NOT NULL DEFAULT 0")
+            Log.i("P2P_TFG", "[DB] Upgrade $oldVersion -> $newVersion: seguridad, cola de envío y dosis programada.")
             return
         }
         Log.i("P2P_TFG", "[DB] Upgrade $oldVersion -> $newVersion. Recreando tablas...")
@@ -560,11 +565,15 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         }
     }
 
-    fun eliminarPacienteClinico(patientId: String) {
+    /**
+     * Borra un paciente del directorio. Con [revocarClave] borra también la clave de
+     * cifrado de esa relación; al desvincular se conserva hasta que el paciente
+     * confirma el aviso UNLINK_DOCTOR, porque hace falta para cifrarlo.
+     */
+    fun eliminarPacienteClinico(patientId: String, revocarClave: Boolean = true) {
         val db = this.getWritableDatabase(dbPassphrase)
         try {
-            // Revocar también la clave de cifrado de esa relación
-            db.execSQL(
+            if (revocarClave) db.execSQL(
                 """DELETE FROM clave_par WHERE EXISTS (SELECT 1 FROM paciente_clinico p
                    WHERE p.id = ? AND p.ownerPeerId = clave_par.ownerPeerId AND p.peerId = clave_par.peerId)""",
                 arrayOf(patientId)
@@ -946,6 +955,15 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         )
     }
 
+    /** Anula los mensajes de un tipo aún pendientes para un destinatario (→ CANCELLED). */
+    fun cancelarMensajesPendientes(ownerPeerId: String, destPeerId: String, tipoMensaje: String) {
+        this.getWritableDatabase(dbPassphrase).execSQL(
+            """UPDATE sync_log SET accion = 'CANCELLED', timestampModificacion = ?
+               WHERE ownerPeerId = ? AND destPeerId = ? AND tipoMensaje = ? AND accion = 'SEND_PENDING'""",
+            arrayOf(System.currentTimeMillis(), ownerPeerId, destPeerId, tipoMensaje)
+        )
+    }
+
     /** Pendientes demasiado antiguos (el receptor ya los rechazaría por caducados) → EXPIRED. */
     fun expirarMensajesPendientes(ownerPeerId: String, creadosAntesDe: Long): Int =
         this.getWritableDatabase(dbPassphrase).let { db ->
@@ -976,7 +994,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val id: String, val pautaId: String, val medicacion: String, val dosis: String,
         val intervaloHoras: Int, val timestamp: Long, val administradoPorPeerId: String,
         val temperatura: Float?, val sintomas: String?, val notas: String?,
-        val contenidoFirmado: String, val firma: String
+        val contenidoFirmado: String, val firma: String, val dosisProgramada: Long
     )
 
     /** Todas las tomas de un paciente, de la más reciente a la más antigua (RF-08). */
@@ -984,7 +1002,7 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val cursor = this.getReadableDatabase(dbPassphrase).rawQuery(
             """SELECT rs.id, rs.pautaId, COALESCE(p.medicacion, 'Pauta desconocida'), COALESCE(p.dosis, ''),
                       COALESCE(p.intervaloHoras, 24), rs.timestampSuministro, rs.doctorAdministeredPeerId,
-                      rs.temperatura, rs.sintomas, rs.notas, rs.contenidoFirmado, rs.firma
+                      rs.temperatura, rs.sintomas, rs.notas, rs.contenidoFirmado, rs.firma, rs.dosisProgramada
                FROM registro_suministro rs
                LEFT JOIN pauta_medica_v2 p ON p.id = rs.pautaId
                WHERE rs.patientPeerId = ?
@@ -1000,7 +1018,8 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                     administradoPorPeerId = cursor.getString(6),
                     temperatura = if (cursor.isNull(7)) null else cursor.getFloat(7),
                     sintomas = cursor.getString(8), notas = cursor.getString(9),
-                    contenidoFirmado = cursor.getString(10), firma = cursor.getString(11)
+                    contenidoFirmado = cursor.getString(10), firma = cursor.getString(11),
+                    dosisProgramada = cursor.getLong(12)
                 ))
             }
         } finally { cursor.close() }
@@ -1077,12 +1096,12 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             db.execSQL(
                 // Append-only e idempotente: un suministro repetido (mismo id) se ignora
                 """INSERT OR IGNORE INTO registro_suministro
-                    (id, pautaId, patientPeerId, doctorAdministeredPeerId, timestampSuministro, temperatura, sintomas, notas)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (id, pautaId, patientPeerId, doctorAdministeredPeerId, timestampSuministro, temperatura, sintomas, notas, dosisProgramada)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 arrayOf(
                     registro.id, registro.pautaId, registro.patientPeerId,
                     registro.doctorAdministeredPeerId, registro.timestampSuministro,
-                    registro.temperatura, registro.sintomas, registro.notas
+                    registro.temperatura, registro.sintomas, registro.notas, registro.dosisProgramada
                 )
             )
             Log.i("P2P_TFG", "[DB] Suministro registrado: pauta=${registro.pautaId.take(8)}")
@@ -1093,58 +1112,90 @@ class AppDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     // QUERY COMPLEJA: pautas activas HOY de pacientes del doctor,
     // excluyendo las que ya tienen suministro registrado hoy.
-    fun obtenerAlertasPendientesHoy(doctorPeerId: String): List<com.alberto.medp2p_poc.data.model.PautaMedicaV2> {
-        val lista = mutableListOf<com.alberto.medp2p_poc.data.model.PautaMedicaV2>()
-        val db = this.getReadableDatabase(dbPassphrase)
-
-        val cal = java.util.Calendar.getInstance()
-        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
-        cal.set(java.util.Calendar.MINUTE, 0)
-        cal.set(java.util.Calendar.SECOND, 0)
-        cal.set(java.util.Calendar.MILLISECOND, 0)
-        val inicioDia = cal.timeInMillis
-        val finDia    = inicioDia + 86_400_000L
-
-        val cursor = db.rawQuery("""
+    /**
+     * Alertas por dosis programada: para cada pauta vigente de mis pacientes, la
+     * dosis prevista que toca ahora (DosisProgramada), si todavía no hay ninguna
+     * toma registrada para ella. Antes se comprobaba si había alguna toma "hoy",
+     * lo que con pautas de menos de 24 h ocultaba el resto de dosis del día.
+     */
+    fun obtenerAlertasPendientes(
+        ownerPeerId: String,
+        ahora: Long = System.currentTimeMillis()
+    ): List<com.alberto.medp2p_poc.data.model.AlertaDosis> {
+        val pautas = mutableListOf<com.alberto.medp2p_poc.data.model.PautaMedicaV2>()
+        val cursor = this.getReadableDatabase(dbPassphrase).rawQuery("""
             SELECT p.id, p.patientPeerId, p.doctorCreatorPeerId,
                    p.medicacion, p.dosis, p.intervaloHoras, p.fechaInicio, p.fechaFin
             FROM pauta_medica_v2 p
             INNER JOIN paciente_clinico pc
-                ON pc.peerId = p.patientPeerId
-                AND pc.ownerPeerId = ?
-            WHERE p.fechaInicio <= ?
-              AND p.fechaFin    >= ?
-              AND p.id NOT IN (
-                  SELECT DISTINCT rs.pautaId
-                  FROM registro_suministro rs
-                  WHERE rs.pautaId = p.id
-                    AND rs.timestampSuministro >= ?
-                    AND rs.timestampSuministro <  ?
-              )
-                ORDER BY p.medicacion ASC
-        """.trimIndent(),
-            arrayOf(doctorPeerId, finDia.toString(), inicioDia.toString(), inicioDia.toString(), finDia.toString())
-        )
+                ON pc.peerId = p.patientPeerId AND pc.ownerPeerId = ?
+            WHERE p.fechaFin >= ?
+            ORDER BY p.medicacion ASC
+        """.trimIndent(), arrayOf(ownerPeerId, ahora.toString()))
         try {
-            if (cursor.moveToFirst()) {
-                do {
-                    lista.add(com.alberto.medp2p_poc.data.model.PautaMedicaV2(
-                        id                  = cursor.getString(0),
-                        patientPeerId       = cursor.getString(1),
-                        doctorCreatorPeerId = cursor.getString(2),
-                        medicacion          = cursor.getString(3),
-                        dosis               = cursor.getString(4),
-                        intervaloHoras      = cursor.getInt(5), // <-- CAMBIADO: Antes frecuenciaDiaria
-                        fechaInicio         = cursor.getLong(6),
-                        fechaFin            = cursor.getLong(7)
-                    ))
-                } while (cursor.moveToNext())
+            while (cursor.moveToNext()) {
+                pautas.add(com.alberto.medp2p_poc.data.model.PautaMedicaV2(
+                    id = cursor.getString(0), patientPeerId = cursor.getString(1),
+                    doctorCreatorPeerId = cursor.getString(2), medicacion = cursor.getString(3),
+                    dosis = cursor.getString(4), intervaloHoras = cursor.getInt(5),
+                    fechaInicio = cursor.getLong(6), fechaFin = cursor.getLong(7)
+                ))
             }
-        } finally {
-            cursor.close()
-            // db.close()
+        } finally { cursor.close() }
+        return pautas.mapNotNull { p ->
+            val dosis = com.alberto.medp2p_poc.data.model.DosisProgramada.actual(p, ahora) ?: return@mapNotNull null
+            if (obtenerTomaDeDosis(p.id, dosis) != null) null
+            else com.alberto.medp2p_poc.data.model.AlertaDosis(p, dosis)
         }
-        return lista
+    }
+
+    /** Primera toma ya registrada para una dosis prevista: (quién, cuándo, contenido firmado). */
+    data class FilaTomaDosis(val administradoPorPeerId: String, val timestamp: Long, val contenidoFirmado: String)
+
+    fun obtenerTomaDeDosis(pautaId: String, dosisProgramada: Long): FilaTomaDosis? {
+        val cursor = this.getReadableDatabase(dbPassphrase).rawQuery(
+            """SELECT doctorAdministeredPeerId, timestampSuministro, contenidoFirmado FROM registro_suministro
+               WHERE pautaId = ? AND dosisProgramada = ? ORDER BY timestampSuministro LIMIT 1""",
+            arrayOf(pautaId, dosisProgramada.toString())
+        )
+        return try {
+            if (cursor.moveToFirst()) FilaTomaDosis(cursor.getString(0), cursor.getLong(1), cursor.getString(2)) else null
+        } finally { cursor.close() }
+    }
+
+    /**
+     * Dosis previstas registradas más de una vez (posible sobredosificación) para
+     * los pacientes de este cuidador, desde [desde].
+     */
+    fun obtenerConflictosDosis(ownerPeerId: String, desde: Long): List<com.alberto.medp2p_poc.data.model.ConflictoDosis> {
+        val cursor = this.getReadableDatabase(dbPassphrase).rawQuery("""
+            SELECT rs.pautaId, rs.patientPeerId, p.medicacion, rs.dosisProgramada, COUNT(*)
+            FROM registro_suministro rs
+            INNER JOIN pauta_medica_v2 p ON p.id = rs.pautaId
+            INNER JOIN paciente_clinico pc ON pc.peerId = rs.patientPeerId AND pc.ownerPeerId = ?
+            WHERE rs.dosisProgramada > 0 AND rs.dosisProgramada >= ?
+            GROUP BY rs.pautaId, rs.dosisProgramada
+            HAVING COUNT(*) > 1
+            ORDER BY rs.dosisProgramada DESC
+        """.trimIndent(), arrayOf(ownerPeerId, desde.toString()))
+        return try {
+            buildList {
+                while (cursor.moveToNext()) add(com.alberto.medp2p_poc.data.model.ConflictoDosis(
+                    cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getLong(3), cursor.getInt(4)))
+            }
+        } finally { cursor.close() }
+    }
+
+    /**
+     * Último contacto confirmado con el dispositivo de un paciente (un acuse
+     * firmado suyo o un mensaje suyo). Por ese dispositivo llegan las tomas de
+     * los demás cuidadores, así que indica lo actualizada que está la información.
+     */
+    fun actualizarUltimoContacto(ownerPeerId: String, peerId: String, timestamp: Long) {
+        this.getWritableDatabase(dbPassphrase).execSQL(
+            "UPDATE paciente_clinico SET lastSyncAt = ? WHERE ownerPeerId = ? AND peerId = ?",
+            arrayOf(timestamp, ownerPeerId, peerId)
+        )
     }
 
     // ══════════════════════════════════════════════════════════════

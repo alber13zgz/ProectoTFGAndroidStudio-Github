@@ -201,14 +201,18 @@ class KeyVaultManager(private val context: Context) {
         leerClavesCifrado().firstOrNull { it.epoch == epoch }?.let { CryptoUtils.fromB64Url(it.priv) }
     }
 
-    /** Borra las claves privadas de épocas anteriores a [epoch]. La vigente nunca se borra. */
-    fun purgeEncryptionKeysBefore(epoch: Int) = synchronized(ENC_KEY_LOCK) {
+    /**
+     * Borra las claves privadas antiguas según la política de retención
+     * (PoliticaRetencion). [minConfirmado]: menor época propia que algún par
+     * vinculado conoce, o null si no hay pares. La vigente nunca se borra.
+     */
+    fun purgeEncryptionKeys(minConfirmado: Int?, ahora: Long = System.currentTimeMillis()) = synchronized(ENC_KEY_LOCK) {
         val claves = leerClavesCifrado()
-        val vigente = claves.maxOfOrNull { it.epoch } ?: return@synchronized
-        val conservar = claves.filter { it.epoch >= minOf(epoch, vigente) }
-        if (conservar.size != claves.size) {
-            guardarClavesCifrado(conservar)
-            Log.i(TAG, "Claves de cifrado anteriores a la época $epoch eliminadas (${claves.size - conservar.size}).")
+        val borrar = PoliticaRetencion.epocasABorrar(
+            claves.map { PoliticaRetencion.Epoca(it.epoch, it.createdAt) }, minConfirmado, ahora)
+        if (borrar.isNotEmpty()) {
+            guardarClavesCifrado(claves.filter { it.epoch !in borrar })
+            Log.i(TAG, "Claves de cifrado de las épocas $borrar eliminadas (fin de su periodo de retención).")
         }
     }
 
@@ -265,7 +269,8 @@ class KeyVaultManager(private val context: Context) {
         storedSalt: ByteArray
     ): Boolean {
         val inputHash = hashPassword(inputPassword, storedSalt)
-        return inputHash.contentEquals(storedHash)
+        // Comparación en tiempo constante: no revela cuántos bytes coinciden
+        return java.security.MessageDigest.isEqual(inputHash, storedHash)
     }
 
     data class GeneratedIdentity(

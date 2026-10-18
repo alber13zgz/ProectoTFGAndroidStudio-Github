@@ -118,7 +118,8 @@ class PatientDetailViewModel(application: Application) : AndroidViewModel(applic
                     else -> "Cuidador …${fila.administradoPorPeerId.takeLast(6)}"
                 },
                 temperatura = fila.temperatura, sintomas = fila.sintomas, notas = fila.notas,
-                firmada = fila.firma.isNotEmpty()
+                firmada = fila.firma.isNotEmpty(),
+                dosisProgramada = fila.dosisProgramada
             )
         }
         return DetectorDuplicados.marcar(tomas)

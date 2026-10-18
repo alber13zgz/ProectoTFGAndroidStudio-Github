@@ -24,5 +24,6 @@ data class RegistroSuministro(
     val timestampSuministro: Long = System.currentTimeMillis(),
     val temperatura: Float? = null,
     val sintomas: String? = null,
-    val notas: String? = null
+    val notas: String? = null,
+    val dosisProgramada: Long = 0L   // hora prevista de la dosis (identificador común de la toma)
 )

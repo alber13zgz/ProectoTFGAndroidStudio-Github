@@ -12,6 +12,10 @@ import com.alberto.medp2p_poc.data.model.UserRole
 import com.alberto.medp2p_poc.data.model.UserSession
 import com.alberto.medp2p_poc.data.p2p.P2PMessagingService
 import com.alberto.medp2p_poc.data.p2p.PairingCode
+import com.alberto.medp2p_poc.data.p2p.SuministroPayload
+import com.alberto.medp2p_poc.data.model.AlertaDosis
+import com.alberto.medp2p_poc.data.model.ConflictoDosis
+import kotlinx.serialization.json.Json
 import io.libp2p.core.Host
 import io.libp2p.core.crypto.KeyType
 import io.libp2p.core.crypto.PrivKey
@@ -38,6 +42,16 @@ sealed class ConnectionStatus {
 /** Resultado de un intento de vinculación, para mostrarlo en la UI. */
 data class LinkResult(val ok: Boolean, val message: String)
 
+/** Intento de registrar una dosis que ya consta como administrada (se pide confirmación). */
+data class DosisYaRegistrada(
+    val alerta: AlertaDosis,
+    val quien: String,
+    val cuando: Long,
+    val temperatura: Float?,
+    val sintomas: String?,
+    val notas: String?
+)
+
 data class DashboardData(
     val connectionStatus: ConnectionStatus = ConnectionStatus.Disconnected,
     val patientCount: Int = 0,
@@ -60,8 +74,16 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val medicosVinculados: StateFlow<List<MedicoVinculado>> = _medicosVinculados.asStateFlow()
 
     // ── StateFlow de Alertas Pendientes (PAUTAS MÉDICAS) ──
-    private val _alertasPendientes = MutableStateFlow<List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>>(emptyList())
-    val alertasPendientes: StateFlow<List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>> = _alertasPendientes.asStateFlow()
+    private val _alertasPendientes = MutableStateFlow<List<AlertaDosis>>(emptyList())
+    val alertasPendientes: StateFlow<List<AlertaDosis>> = _alertasPendientes.asStateFlow()
+
+    // Dosis previstas registradas dos veces en las últimas 48 h (posible sobredosificación)
+    private val _conflictosDosis = MutableStateFlow<List<ConflictoDosis>>(emptyList())
+    val conflictosDosis: StateFlow<List<ConflictoDosis>> = _conflictosDosis.asStateFlow()
+
+    // Al registrar una toma de una dosis que ya consta como dada: la UI pide confirmación
+    private val _dosisYaRegistrada = MutableSharedFlow<DosisYaRegistrada>(extraBufferCapacity = 2)
+    val dosisYaRegistrada: SharedFlow<DosisYaRegistrada> = _dosisYaRegistrada
 
     private val _pautasPacienteActivas = MutableStateFlow<List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>>(emptyList())
     val pautasPacienteActivas: StateFlow<List<com.alberto.medp2p_poc.data.model.PautaMedicaV2>> = _pautasPacienteActivas.asStateFlow()
@@ -73,7 +95,10 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private fun loadAlertasPendientes() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                _alertasPendientes.value = dbHelper.obtenerAlertasPendientesHoy(_dashboard.value.ownerPeerId)
+                val owner = _dashboard.value.ownerPeerId
+                val ahora = System.currentTimeMillis()
+                _alertasPendientes.value = dbHelper.obtenerAlertasPendientes(owner, ahora)
+                _conflictosDosis.value = dbHelper.obtenerConflictosDosis(owner, ahora - 48L * 3_600_000)
             } catch (e: Exception) {
                 Log.e(TAG, "Error cargando alertas: ${e.message}")
             }
@@ -237,17 +262,15 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     fun refreshCounters() { loadDashboardCounters() }
 
     /**
-     * CUIDADOR: desvincula a un paciente. Primero avisa al paciente (UNLINK_DOCTOR)
-     * para que revoque la autorización y la clave de este cuidador; después lo
-     * borra localmente junto con su clave de cifrado. Si el paciente no está
-     * conectado, el borrado local se hace igualmente (decisión del cuidador).
+     * CUIDADOR: desvincula a un paciente. Se borra ya del directorio local y se
+     * encola el aviso UNLINK_DOCTOR para que el paciente revoque la autorización y
+     * la clave de este cuidador; si no está conectado, le llega al volver. La clave
+     * del paciente se borra en cuanto confirma el aviso.
      */
     fun desvincularPaciente(patientId: String, patientPeerId: String, onDone: () -> Unit = {}) {
         viewModelScope.launch(Dispatchers.IO) {
-            val node = activeHost
-            val avisado = node != null && messagingService.sendUnlinkDoctorMessage(node, patientPeerId)
-            if (!avisado) Log.w(TAG, "Paciente no notificado de la desvinculación (sin conexión o rechazado)")
-            dbHelper.eliminarPacienteClinico(patientId)
+            messagingService.enviarDesvinculacion(patientPeerId)
+            dbHelper.eliminarPacienteClinico(patientId, revocarClave = false)
             loadDashboardCounters()
             loadPacientesDoctor()
             loadAlertasPendientes()
@@ -431,32 +454,64 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /**
+     * Registra la toma de una dosis prevista. Si esa misma dosis ya consta como
+     * administrada (por este u otro cuidador), no se registra: se emite
+     * [dosisYaRegistrada] para que la UI pida confirmación explícita, y solo con
+     * [forzar] = true se guarda (quedando marcada como conflicto para todos).
+     */
     fun registrarSuministro(
-        pautaId: String,
-        patientPeerId: String,
-        temperatura: Float? = null, // <-- NUEVO: Para enviar la fiebre si la hay
-        sintomas: String? = null,   // <-- NUEVO: Para enviar los checkbox
-        notas: String? = null       // <-- NUEVO: Para notas libres
+        alerta: AlertaDosis,
+        temperatura: Float? = null,
+        sintomas: String? = null,
+        notas: String? = null,
+        forzar: Boolean = false
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             val owner = _dashboard.value.ownerPeerId
+            val pauta = alerta.pauta
+            val previa = dbHelper.obtenerTomaDeDosis(pauta.id, alerta.dosisProgramada)
+            if (previa != null && !forzar) {
+                val nombre = when {
+                    previa.administradoPorPeerId == owner -> "ti"
+                    else -> runCatching { json.decodeFromString<SuministroPayload>(previa.contenidoFirmado).administradoPorNombre }
+                        .getOrNull()?.takeIf { it.isNotBlank() } ?: "otro cuidador"
+                }
+                _dosisYaRegistrada.emit(DosisYaRegistrada(alerta, nombre, previa.timestamp, temperatura, sintomas, notas))
+                return@launch
+            }
             val registro = com.alberto.medp2p_poc.data.model.RegistroSuministro(
-                pautaId                  = pautaId,
-                patientPeerId            = patientPeerId,
+                pautaId                  = pauta.id,
+                patientPeerId            = pauta.patientPeerId,
                 doctorAdministeredPeerId = owner,
-                temperatura              = temperatura, // <-- NUEVO
-                sintomas                 = sintomas,    // <-- NUEVO
-                notas                    = notas        // <-- NUEVO
+                temperatura              = temperatura,
+                sintomas                 = sintomas,
+                notas                    = notas,
+                dosisProgramada          = alerta.dosisProgramada
             )
             dbHelper.insertarRegistroSuministro(registro)
             loadAlertasPendientes()
-            Log.d(TAG, "✅ Suministro registrado: pauta=$pautaId")
+            Log.d(TAG, "✅ Suministro registrado: pauta=${pauta.id} dosis=${alerta.dosisProgramada}" +
+                if (previa != null) " (DUPLICADA, confirmada por el cuidador)" else "")
 
             // Offline-First: se encola aunque no haya conexión; el paciente lo
             // replicará a sus demás cuidadores
             messagingService.enviarSuministro(registro, _dashboard.value.displayName)
         }
     }
+
+    /**
+     * Comprueba ahora la conexión con el móvil del paciente (PING) para que la
+     * "última sincronización" que se muestra al registrar una toma sea real.
+     */
+    fun comprobarSincronizacion(patientPeerId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (::messagingService.isInitialized) messagingService.comprobarContacto(patientPeerId)
+            loadPacientesDoctor()
+        }
+    }
+
+    private val json = Json { ignoreUnknownKeys = true }
 
     override fun onCleared() {
         super.onCleared()
